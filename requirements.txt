@@ -1,0 +1,13 @@
+beautifulsoup4==4.12.3
+cplex==22.1.1.2
+folium==0.17.0
+haversine==2.8.1
+matplotlib==3.8.4
+networkx==3.2.1
+numpy==2.0.1
+osmnx==1.9.4
+pandas==2.2.2
+Requests==2.32.3
+seaborn==0.13.2
+selenium==4.23.1
+tqdm==4.66.2

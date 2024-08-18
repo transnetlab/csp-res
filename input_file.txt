@@ -1,0 +1,24 @@
+# Network Name: 128: 128 Business Council GTFS, ann: Ann Arbor Transit, ny: Newyork, arl: Arlington_1.2k, surat: Surat,
+# madrid: Madrid_Filtered_3.69K, ed: Edmonton_6k
+# can1: Canberra_3.91k, can2: Canberra_1.7k
+Network key: thunder
+# Enter the number of scenarios
+Number of scenarios: 1
+# Enter 1 if you want to add benders cut else 0
+Benders cut: 1
+# Enter benders strategy (1-user, 3-automatic)
+Benders Strategy: 1
+# Enter variable Type (C-continuous, I-Integer)
+Variable Type: C
+# Enter parallel mode (-1:opportunistic, 0: default, 1:deterministic)
+Parallel Mode: 0
+# Enter the number of core
+Number of Core: 1
+# fraction of clubbing
+Fraction: 52
+# temperature variation considered or not
+Temperature: 1
+# renewable Integration
+Renewable: 1
+
+
