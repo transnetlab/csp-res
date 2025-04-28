@@ -1,6 +1,7 @@
-
 import datetime
 from calendar import monthrange
+import math
+
 
 def week_of_month(dt):
     """ Returns the week of the month for the specified date.
@@ -8,7 +9,8 @@ def week_of_month(dt):
     first_day = dt.replace(day=1)
     first_day_weekday = first_day.weekday()
     adjusted_dom = dt.day + first_day_weekday
-    return int(ceil(adjusted_dom/7.0))
+    return int(math.ceil(adjusted_dom / 7.0))
+
 
 def weeks_in_month(year, month):
     """ Returns the number of weeks in the specified month.
@@ -17,6 +19,7 @@ def weeks_in_month(year, month):
     first_day = datetime.date(year, month, 1)
     last_date = datetime.date(year, month, last_day)
     return last_date.isocalendar()[1] - first_day.isocalendar()[1] + 1
+
 
 def assign_week_to_month(year):
     """ Assigns each week of the year to the corresponding month.

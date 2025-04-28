@@ -9,9 +9,10 @@ with open('./dict_network_name.pkl', 'rb') as f:
 def run_input_file(run_id: int):
     """
     This function is used to run the input file
-    :param run_id: type of scenario to be run with different cases
+    :param run_id: Run ID (network and scenario information)
     :return:
-    dict_kwargs: dictionary containing the input file locations, scenarios and cases
+    dict_kwargs_preprocessing: dictionary containing the input file locations, scenarios and cases
+    dict_kwargs_csp: dictionary containing the CSP run information
     """
     # read the run_file
     run_file = pd.read_csv('./run_file.csv')

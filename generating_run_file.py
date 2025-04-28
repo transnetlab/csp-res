@@ -55,7 +55,13 @@ run_file.loc[41] = [42, 'Thunder_bay_clustering', 1, False, 4, 'C', 0, True, Tru
 run_file.loc[42] = [43, 'Thunder_bay_clustering', 1, False, 13, 'C', 0, True, True]
 run_file.loc[43] = [44, 'Thunder_bay_clustering', 1, False, 26, 'C', 0, True, True]
 run_file.loc[44] = [45, 'Thunder_bay_clustering', 1, False, 52, 'C', 0, True, True]
+run_file.loc[45] = [46, 'Surat', 1, True, 1, 'C', 0, True, True]
 
+run_file.loc[46] = [47, 'Durham_2.1k', 1, True, 4, 'C', 0, True, True]
+run_file.loc[47] = [48, 'Durham_2.1k', 1, False, 4, 'C', 0, True, True]
+
+run_file.loc[48] = [49, 'Canberra_3.91k', 1, True, 4, 'C', 0, True, True]
+run_file.loc[49] = [50, 'Canberra_3.91k', 1, False, 4, 'C', 0, True, True]
 
 run_file.to_csv('run_file.csv', index=False)
 

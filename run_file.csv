@@ -44,3 +44,8 @@ Run_ID,Network_Name,Benders_strategy,Apply_Benders_Cut,Scenarios,Variable_Type,P
 43,Thunder_bay_clustering,1,False,13,C,0,True,True
 44,Thunder_bay_clustering,1,False,26,C,0,True,True
 45,Thunder_bay_clustering,1,False,52,C,0,True,True
+46,Surat,1,True,1,C,0,True,True
+47,Durham_2.1k,1,True,4,C,0,True,True
+48,Durham_2.1k,1,False,4,C,0,True,True
+49,Canberra_3.91k,1,True,4,C,0,True,True
+50,Canberra_3.91k,1,False,4,C,0,True,True

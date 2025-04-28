@@ -1,3 +1,7 @@
+"""
+Builds the solar scenarios for the given network based on GTI values.
+"""
+
 import os
 import pickle
 import pandas as pd
@@ -54,7 +58,7 @@ def build_scenario(network_name: str, scenarios: int):
             # for each hour
             for j in range(24):
                 dict_scenario[location][i][j] = round(data[data.Hour == j]['Plane of Array '
-                                                                           'Irradiance (W/m2)'].mean()/60000, 5)
+                                                                           'Irradiance (W/m2)'].mean() / 60000, 5)
 
     # save dict_scenario as pickle file
     with open(f'./{network_name}/{scenarios}_scenario/gti_variation.pkl', 'wb') as f:

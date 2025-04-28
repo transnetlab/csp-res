@@ -17,7 +17,7 @@ def stop_to_stop_distance(stop_id_1: str, stop_id_2: str, dict_stop_distance: di
     :param dict_stop_distance: dictionary of stop distance
     :param stops_df: stops dataframe
     :return:
-    distance between two stops
+    distance between two stops in km
     """
     # check if distance is available in the dictionary from stop_id_1 to stop_id_2
     if (stop_id_1, stop_id_2) in dict_stop_distance:
@@ -61,7 +61,7 @@ def assign_bus_number(bus_trip_assignment: list, trip_schedule_df: pd.DataFrame,
 
     # assigning bus_number to trip as per bus assignment
     print("##################################################")
-    bus = 1
+    bus = 1  # to calculate the number of buses required for the given scenario
     trip_schedule_df[f'bus_number_{scenario}'] = 0
 
     # assigning all trips sequence to bus number
@@ -103,10 +103,10 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
     :param dict_stop_to_stop_distances: dictionary of stop to stop distances
     :param charging_locations: set of charging location
     :param dict_start_location: dictionary of bus number and corresponding start location for each scenario
-    :param reference_start_time: reference start time to calculate time stamp
-    :param average_bus_deadheading_speed: average speed of bus in km/hr
+    :param reference_start_time: reference start time to calculate time stamp (midnight)
     :param number_of_scenarios: number of scenarios
     :param dict_terminal_stop_mapping: dictionary of mapping terminal stop to cluster's stop
+    :param average_bus_deadheading_speed: average speed of bus in km/hr
 
     :return:
     dict_time_stamp: dictionary of scenario wise bus its time stamp and corresponding charging event and location
@@ -190,7 +190,8 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
 
                 # time_taken_to_complete_next_deadhead (in minutes) is time required to complete the deadheading distance
                 # from previous end stop to start stop
-                time_taken_to_complete_next_deadhead = np.ceil((deadhead_distance * time_step_hour) / average_bus_deadheading_speed)
+                time_taken_to_complete_next_deadhead = np.ceil(
+                    (deadhead_distance * time_step_hour) / average_bus_deadheading_speed)
 
                 # extra time for deadheading to new terminal based on clustering, adding extra time if updated previous stop
                 # is not equal to previous stop for deadheading to new terminal (we have considered maximum 500 meters)
@@ -218,8 +219,15 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
                     # deadheading distance between the end stop of last trip and start stop of next trip
                     if int(total_available_time - time_taken_to_complete_next_deadhead) > 0:
                         for x in range(int(total_available_time - time_taken_to_complete_next_deadhead)):
-                            dict_time_stamp[scenario][bus][time_stamp] = (charging_opportunity, previous_stop)
-                            dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(time_stamp)
+                            if time_stamp < 1440:
+                                dict_time_stamp[scenario][bus][time_stamp] = (charging_opportunity, previous_stop)
+                                dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(
+                                    time_stamp)
+                            else:  # if time_stamp is greater than 1440 then subtracting 1440 to get the time_stamp in day 1
+                                dict_time_stamp[scenario][bus][time_stamp - 1440] = \
+                                    (charging_opportunity, previous_stop)
+                                dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(
+                                    time_stamp - 1440)
                             time_stamp += 1
 
                     # adding the charging location to the end of the list of time stamp
@@ -241,8 +249,15 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
 
                     if int(total_available_time - time_taken_to_complete_next_deadhead) > 0:
                         for x in range(int(total_available_time - time_taken_to_complete_next_deadhead)):
-                            dict_time_stamp[scenario][bus][time_stamp] = (charging_opportunity, start_stop)
-                            dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(time_stamp)
+                            if time_stamp < 1440:
+                                dict_time_stamp[scenario][bus][time_stamp] = (charging_opportunity, start_stop)
+                                dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(
+                                    time_stamp)
+                            else:  # if time_stamp is greater than 1440 then subtracting 1440 to get the time_stamp in day 1
+                                dict_time_stamp[scenario][bus][time_stamp - 1440] = \
+                                    (charging_opportunity, start_stop)
+                                dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity].append(
+                                    time_stamp - 1440)
                             time_stamp += 1
 
                     # adding the charging location to the end of the list of time stamp
@@ -475,7 +490,8 @@ def estimate_charging_opportunity_wise_energy_requirement(trip_schedule_df: pd.D
 
 def find_time_stamp_grid(start_time: dict, end_time: int, dict_time_stamp: dict, scenarios: int) -> dict:
     """
-    Finding time-steps for grid capacity constraints and corresponding buses charging at that time stamp
+    Finding time-steps for grid capacity constraints (when buses are present) and corresponding buses charging
+    at that time stamp
     :param start_time: dict of start time of charging event for each scenario
     :param end_time: end time of charging event
     :param dict_time_stamp: dictionary of scenario wise bus its time stamp and corresponding charging event and location
@@ -492,6 +508,9 @@ def find_time_stamp_grid(start_time: dict, end_time: int, dict_time_stamp: dict,
 
         # initializing dictionary for each scenario
         dict_time_stamp_grid[scenario] = {}
+
+        start_time[scenario] = 0  # start time of the model
+        end_time = 1439  # end time of the model (day 1)
 
         # for each time stamp in the scenario
         for time in range(start_time[scenario], end_time + 1):
@@ -522,29 +541,29 @@ def find_time_stamp_grid(start_time: dict, end_time: int, dict_time_stamp: dict,
     return dict_time_stamp_grid
 
 
-def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charging_locations, file_name_depot_index_to_stop,
+def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charging_locations,
+                  file_name_depot_index_to_stop,
                   file_name_stops, file_name_terminal_stops_mapping, network_name, scenarios, use_temperature=True):
     """
     :param file_name_trip_times: trip times file location
     :param file_name_stop_distance: stop distance file location
     :param file_name_charging_locations: charging location file location
-    :param file_name_stops: stops_df file location
     :param file_name_depot_index_to_stop: depot index file location
+    :param file_name_stops: stops_df file location
     :param file_name_terminal_stops_mapping: terminal mapping file location
-    :param scenarios: number of scenarios
     :param network_name: network name
+    :param scenarios: number of scenarios
     :param use_temperature: boolean value whether temperature variations considered or not
     :return:
     dict_time_stamp: dictionary of bus number and time stamp
-    dict_charging_event_wise_time_stamp: dictionary of bus number and charging event wise time stamp
-    dict_bus_start_time: dictionary of bus number and start time
+    dict_charging_event_stamps: dictionary of bus number and charging event wise time stamp
     dict_energy_required: dictionary of bus number, charging location and energy required
-    solar_energy_dict: dictionary of solar energy produced in each time period
-    greedy_approach: boolean value whether overnight charging for all buses is possible or not
     end_time_stamp: end time stamp
     charging_locations: list of charging location
+    dict_stamp_grid: dictionary of timestamps where buses are present for grid capacity constraints
+    start_time_stamp: start time stamp
+    dict_loc_time_non_grid: dictionary of timestamps where buses are not present for grid capacity constraints
     """
-
     trip_schedule_df = pd.read_csv(file_name_trip_times)
     stops_df = pd.read_csv(file_name_stops)
 
@@ -577,8 +596,8 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
     day_before_string = str(date.today() - timedelta(days=1))
     day_before_mid_night = np.datetime64(day_before_string + ' ' + '00:00:00')
     next_day_string = str(date.today() + timedelta(days=1))
-    start_time_non_depot = int((mid_night + np.timedelta64(5, 'h')
-                                - day_before_mid_night) / np.timedelta64(1, 'm'))
+    # start_time_non_depot = int((mid_night + np.timedelta64(5, 'h')
+    #                             - day_before_mid_night) / np.timedelta64(1, 'm'))
 
     #  adding date to the time string
     trip_schedule_df.Start_Time = np.where(trip_schedule_df.Start_Day == 0,
@@ -604,7 +623,6 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
     # assigning bus number to trip if temperature variations are considered
     if use_temperature:
         for scenario in tqdm(range(1, scenarios + 1), desc="Assigning bus number to trip"):
-
             # initializing dictionary for each scenario for start location
             dict_start_location[scenario] = {}
 
@@ -630,7 +648,6 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
 
         # for each scenario
         for scenario in tqdm(range(1, scenarios + 1), desc="Assigning bus number to trip"):
-
             # initializing dictionary for each scenario for start location
             dict_start_location[scenario] = {}
 
@@ -691,8 +708,32 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
                                            dict_time_stamp,
                                            scenarios)
 
+    # print(dict_stamp_grid)
+    # print(start_time_stamp)
+    # print(end_time_stamp)
+    # print(dict_stamp_grid[1][2526]['2585:1'])
+    # use get method to avoid key error
+    # print(dict_stamp_grid.get(1, {}).get(2526, {}).get('2585:1', 0))
+    # print(dict_stamp_grid.get(1, {}).get(2526, {}).get('2585:2', 0))
+
+    # to find the time-steps where buses are not present for grid capacity constraints
+    dict_loc_time_non_grid = {}
+    for scenario in range(1, scenarios + 1):
+        start_time_stamp[scenario] = 0
+        end_time_stamp = 1439
+        dict_loc_time_non_grid[scenario] = {}
+        for time in range(start_time_stamp[scenario], end_time_stamp + 1):
+            dict_loc_time_non_grid[scenario][time] = {}
+            for loc in charging_locations:
+                # if the key of scenario, time and location is not in the dictionary
+                if dict_stamp_grid.get(scenario, {}).get(time, {}).get(loc, -50) == -50:
+                    dict_loc_time_non_grid[scenario][time][loc] = 1
+                else:
+                    dict_loc_time_non_grid[scenario][time][loc] = 0
+
+    # print(dict_loc_time_non_grid)
     # print the average number of buses required
     print("Average number of buses required: ", average_bus_required / scenarios)
 
     return (dict_time_stamp, dict_charging_event_stamps, dict_energy_required, end_time_stamp,
-            charging_locations, dict_stamp_grid, start_time_stamp)
+            charging_locations, dict_stamp_grid, start_time_stamp, dict_loc_time_non_grid)

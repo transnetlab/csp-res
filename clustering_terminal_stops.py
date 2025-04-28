@@ -1,7 +1,7 @@
 import pandas as pd
 import pickle
 
-network = 'Surat'
+network = 'Durham_2.1k'
 # open stops file
 stops = pd.read_csv(f'./{network}/stops.txt')
 stop_times = pd.read_csv(f'./{network}/stop_times.txt')
@@ -10,7 +10,8 @@ trips = pd.read_csv(f'./{network}/trips.txt')
 # find the terminal stops
 terminal_stops_ = stop_times.groupby('trip_id').agg({'stop_id': ['first', 'last']}).reset_index()
 # take unique of start and last stop
-terminal_stops = set(terminal_stops_[('stop_id', 'first')].unique()).union(set(terminal_stops_[('stop_id', 'last')].unique()))
+terminal_stops = set(terminal_stops_[('stop_id', 'first')].unique()).union(
+    set(terminal_stops_[('stop_id', 'last')].unique()))
 # open the distance_file.pkl
 with open(f'./{network}/distance_file.pkl', 'rb') as f:
     distance_file_dict = pickle.load(f)
@@ -20,7 +21,8 @@ distance_file = pd.read_csv(f'./{network}/distance_file.csv')
 distance_file['start_stop'] = distance_file['start_stop'].astype(int)
 distance_file['end_stop'] = distance_file['end_stop'].astype(int)
 
-distance_file = distance_file[distance_file['start_stop'].isin(terminal_stops) & distance_file['end_stop'].isin(terminal_stops)]
+distance_file = distance_file[
+    distance_file['start_stop'].isin(terminal_stops) & distance_file['end_stop'].isin(terminal_stops)]
 
 # for trips in stop_times_filtered
 dict_terminal_stops = {}
@@ -44,7 +46,7 @@ for terminal in terminal_stops:
     dict_terminal_frequency_start[terminal] = len(dict_terminal_stops[terminal][0])
     dict_terminal_frequency_end[terminal] = len(dict_terminal_stops[terminal][1])
     df = df._append({'Terminal Stop': terminal, 'Frequency_Start': len(dict_terminal_stops[terminal][0])
-                   ,'Frequency_End': len(dict_terminal_stops[terminal][1])}, ignore_index=True)
+                        , 'Frequency_End': len(dict_terminal_stops[terminal][1])}, ignore_index=True)
 
 df['Total_Frequency'] = df['Frequency_Start'] + df['Frequency_End']
 
@@ -66,7 +68,6 @@ unique_sets = set()
 for key, value in dict_cluster.items():
     if len(value) >= 2:
         unique_sets.add(frozenset(value))
-
 
 dict_terminal = {}
 total_stops_count = 0
@@ -108,4 +109,3 @@ for stop in stops_not_in_terminal:
 # save the dict_terminal_mapping
 with open(f'./{network}/dict_terminal_mapping.pkl', 'wb') as f:
     pickle.dump(dict_terminal_mapping, f)
-
