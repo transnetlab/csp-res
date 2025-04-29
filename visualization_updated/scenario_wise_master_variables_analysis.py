@@ -176,7 +176,9 @@ def analyze_master_variables(network, folder_path):
         fig, ax = plt.subplots(1, figsize=dict_fig_size[master])
         bar_width = dict_bar_width[master]
         # take those locations which are present in dict_location
-        data_master_scenarios_ = data_master_scenarios[~data_master_scenarios['location'].isin(dict_location[master])]
+        master_updated = list_master[2]
+        data_master_scenarios_ = data_master_scenarios[
+            ~data_master_scenarios['location'].isin(dict_location[master_updated])]
         indices = np.arange(len(data_master_scenarios_['location'].unique()))
         # map location from dict_location_mapping
         data_master_scenarios_['location'] = data_master_scenarios_['location'].map(dict_location_mapping)
@@ -263,6 +265,6 @@ def analyze_master_variables(network, folder_path):
 import os
 
 CURR_DIR = os.path.dirname(os.path.realpath(__file__))  # current directory
-network = 'Durham_2.1k'  # change network name here
+network = 'Canberra_3.91k'  # change network name here
 folder_path = CURR_DIR[:-22]
 analyze_master_variables(network, folder_path)

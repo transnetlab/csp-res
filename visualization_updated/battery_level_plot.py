@@ -72,7 +72,7 @@ def plot_bess_level(network, folder_path):
         # plot the battery levels with respect to time using line plot,
         # if there is an increase using green color,
         # if there is a decrease using red color and if there is no change using blue color
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(24, 6))
         for i in range(len(time) - 1):
             # print(round(time[i + 1] - math.floor(time[i + 1]), 2))
             if battery_levels[i] < battery_levels[i + 1] and round(time[i + 1] - math.floor(time[i + 1]),
@@ -89,12 +89,13 @@ def plot_bess_level(network, folder_path):
                 plt.plot([time[i], time[i + 1]], [battery_levels[i], battery_levels[i + 1]], color='b')
         # restrict the x-axis from 1020 to 2850
         # plt.xlim(2750, 2900)
-        plt.xlabel('Time', fontsize=20)
-        plt.ylabel('Battery Level (kWh)', fontsize=20)
+        plt.xlabel('Time', fontsize=22)
+        plt.ylabel('Battery Level (kWh)', fontsize=22)
         # for green and red color, add the legend
         plt.plot([], 'yellowgreen', label='Grid to BESS')
         plt.plot([], 'darkgreen', label='Panel to BESS')
         plt.plot([], 'r', label='BESS to Bus')
+        plt.plot([], 'b', label='Idle')
         # put xticklabels in hours
         # plt.xticks(range(1020, 2880, 120),
         #            ['17', '19', '21', '23', '01', '03', '05', '07', '09', '11', '13', '15', '17', '19', '21', '23'])
@@ -107,13 +108,21 @@ def plot_bess_level(network, folder_path):
         # show plot only from 22 and 23
         # plt.xlim(1320, 1440)
         if network == "Durham_2.1k":
-            plt.legend(fontsize=14, loc='upper right', bbox_to_anchor=(0.6, 1))
+            plt.legend(fontsize=18, loc='upper right', bbox_to_anchor=(0.6, 1))
         else:
-            plt.legend(fontsize=14, loc='upper right', bbox_to_anchor=(1, 1))
-        plt.xticks(fontsize=16)
-        plt.yticks(fontsize=16)
+            plt.legend(fontsize=18, loc='upper right', bbox_to_anchor=(1, 1))
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
         plt.savefig(
             f'{folder_path}/{network}/{number_of_scenario}_scenario/bess_battery_level_vs_time_{network}_scenario_{scenario}.pdf',
             dpi=300,
             bbox_inches='tight')
         plt.show()
+
+
+# import os
+#
+# CURR_DIR = os.path.dirname(os.path.realpath(__file__))  # current directory
+# network = 'Canberra_3.91k'  # change network name here
+# folder_path = CURR_DIR[:-22]
+# plot_bess_level(network, folder_path)
