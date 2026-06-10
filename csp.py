@@ -382,16 +382,16 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                                          rhs=rhs,
                                          names=constraint_name)
 
-            # constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
-            # constraint_direction = ["L"]
-            # rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
-            #     1] * parameters.scale_factor_constraints]
-            # list_c = [1 * parameters.scale_factor_constraints]
-            # list_ind = [index_scenario_bus[scenario][bus]]
-            # model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
-            #                              senses=constraint_direction,
-            #                              rhs=rhs,
-            #                              names=constraint_name)
+            constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
+            constraint_direction = ["L"]
+            rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
+                1] * parameters.scale_factor_constraints]
+            list_c = [1 * parameters.scale_factor_constraints]
+            list_ind = [index_scenario_bus[scenario][bus]]
+            model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+                                         senses=constraint_direction,
+                                         rhs=rhs,
+                                         names=constraint_name)
 
     return model, dict_grid_index, dict_solar_index
 
