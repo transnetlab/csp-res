@@ -36,8 +36,10 @@ kwargs_preprocessing, kwargs_csp = run_input_file(run_id)
 
 # data processing step
 (dict_time_stamp, dict_charging_opportunity_time_stamp, dict_energy_required,
- end_time_stamp, charging_locations, dict_time_stamp_grid, start_time_stamp, dict_loc_time_non_bus) = preprocessing(
+ end_time_stamp, charging_locations, dict_time_stamp_grid, start_time_stamp, dict_loc_time_non_bus,
+ bus_list_overall) = preprocessing(
     **kwargs_preprocessing)
+# print(bus_list_overall)
 
 # scenario builder with renewable or without renewable
 if kwargs_csp['use_renewables']:
@@ -55,4 +57,5 @@ csp_scenario_model, dict_scenario_solution = build_and_solve_scenario_based_csp(
                                                                                 dict_time_stamp_grid,
                                                                                 start_time_stamp,
                                                                                 dict_loc_time_non_bus,
+                                                                                bus_list_overall,
                                                                                 **kwargs_csp)

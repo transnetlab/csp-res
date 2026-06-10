@@ -95,7 +95,8 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
                                                    reference_start_time: np.datetime64,
                                                    number_of_scenarios: int,
                                                    dict_terminal_stop_mapping: dict,
-                                                   average_bus_deadheading_speed=30) -> (dict, dict):
+                                                   average_bus_deadheading_speed=30
+                                                   ) -> (dict, dict):
     """
     Assigning time stamp, charging opportunity to buses based on trip schedule and location
     :param trip_schedule_df: trip schedule dataframe
@@ -281,6 +282,8 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
                     previous_stop = str(int(previous_stop))
                 else:
                     previous_stop = str(previous_stop)
+
+    # print(dict_charging_event_wise_time_stamp[1][47])
 
     return dict_time_stamp, dict_charging_event_wise_time_stamp
 
@@ -620,6 +623,7 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
     dict_start_location = {}
     dict_depot = {}
     average_bus_required = 0
+    bus_list_overall = []
     # assigning bus number to trip if temperature variations are considered
     if use_temperature:
         for scenario in tqdm(range(1, scenarios + 1), desc="Assigning bus number to trip"):
@@ -639,6 +643,11 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
                                              dict_depot_index,
                                              dict_depot)
             average_bus_required += bus_required
+            for bus_index in range(1, bus_required + 1):
+                bus_list_overall.append(bus_index)
+            bus_list_overall = list(set(bus_list_overall))
+            # print(bus_list_overall)
+        # print(bus_list_overall)
 
     # assigning bus number to trip if temperature variations are not considered, same for all scenarios
     else:
@@ -659,6 +668,11 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
                                              dict_depot_index,
                                              dict_depot)
             average_bus_required += bus_required
+            for bus_index in range(1, bus_required + 1):
+                bus_list_overall.append(bus_index)
+            bus_list_overall = list(set(bus_list_overall))
+            # print(bus_list_overall)
+        # print(bus_list_overall)
 
     # start time stamp for the model will be the end time stamp of the previous day
     start_time = trip_schedule_df.End_Time.max()
@@ -736,4 +750,4 @@ def preprocessing(file_name_trip_times, file_name_stop_distance, file_name_charg
     print("Average number of buses required: ", average_bus_required / scenarios)
 
     return (dict_time_stamp, dict_charging_event_stamps, dict_energy_required, end_time_stamp,
-            charging_locations, dict_stamp_grid, start_time_stamp, dict_loc_time_non_grid)
+            charging_locations, dict_stamp_grid, start_time_stamp, dict_loc_time_non_grid, bus_list_overall)

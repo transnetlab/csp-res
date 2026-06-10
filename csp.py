@@ -34,7 +34,7 @@ def add_first_stage_variables(model,
     # storing the index of the variables in the dict with variable name as key
     dict_master_variables_index = {}
 
-    # adding first stage variables for each variables
+    # adding first stage variables for each variable
     for location in tqdm(charging_locations, desc="Adding first stage variables"):
 
         # if renewable energy integration is considered adding solar and battery capacity variables
@@ -104,6 +104,7 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                                                             benders_annotation,
                                                             object_type,
                                                             network: str,
+                                                            bus_list_overall,
                                                             probability=1 / 3,
                                                             renewable=True):
     """
@@ -117,6 +118,7 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
     :param benders_annotation: annotation for benders cut
     :param object_type: type of variable for benders cut
     :param network: name of the network
+    :param bus_list_overall: list of total buses available
     :param probability: probability of the scenario
     :param renewable: renewable energy integration considered or not
     :return:
@@ -145,11 +147,28 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                 dict_grid_index[scenario][keys][value_key] = []
                 dict_solar_index[scenario][keys][value_key] = []
 
+    # add bus-specific initial energy level variables across scenarios (same master variable)
+    # for all the buses in bus_overall_list
+    # bus_battery_start = {}
+    # for bus in bus_list_overall:
+    #     constant_energy_bus = "q" + "_" + str(bus)
+    #     index_energy_bus_init = list(
+    #         model.variables.add(names=[constant_energy_bus], lb=[parameters.lower_bound_master_variables],
+    #                             ub=[parameters.Max_battery_capacity],
+    #                             types=["C"]))[0]
+    #     bus_battery_start[bus] = index_energy_bus_init
+    #
+    #     # adding annotation if benders cut is applied
+    #     if bender:
+    #         model.long_annotations.set_values(benders_annotation, object_type, index_energy_bus_init, 0)
+
+    index_scenario_bus = {}
     # iterating over the scenarios
     for scenario in tqdm(range(1, scenarios + 1), desc="Adding scenarios wise decision variables and allowed "
                                                        "transfer from grid or solar-powered battery"):
 
         # iterating over the buses
+        index_scenario_bus[scenario] = {}
         for bus, time_stamps_for_charging_opportunity in dict_charging_event[scenario].items():
 
             # for tracking energy level at the previous charging event
@@ -263,11 +282,14 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                     # initializing the energy level variable
                     string_name_energy = 'u' + "_" + str(scenario) + "_" + str(bus) + "_" + str(charging_opportunity)
 
-                    # adding energy level variable expect for last charging event
+                    # adding energy level variable except for last charging event
                     if charging_opportunity != last_charging_event:
                         index_energy = list(model.variables.add(names=[string_name_energy],
                                                                 lb=[parameters.Min_battery_capacity],
                                                                 ub=[parameters.Max_battery_capacity], types=["C"]))[0]
+
+                        if charging_opportunity == 1:
+                            index_scenario_bus[scenario][bus] = index_energy
 
                         # adding annotation if benders cut is applied
                         if bender:
@@ -280,6 +302,9 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                                                                      lb=[parameters.Min_battery_capacity],
                                                                      ub=[parameters.Max_battery_capacity],
                                                                      types=["C"]))[0]
+
+                        if last_charging_event == 1:
+                            index_scenario_bus[scenario][bus] = last_index_energy
 
                         # adding annotation if benders cut is applied
                         if bender:
@@ -336,6 +361,37 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
 
                 # storing the current energy level variable index for the next charging event
                 previous_charging_event_stamp_index = index_energy
+
+            # constraint_name = [f"bus_equality_{scenario}_{bus}"]
+            # constraint_direction = ["E"]
+            # rhs = [0 * parameters.scale_factor_constraints]
+            # list_c = [1 * parameters.scale_factor_constraints, -1 * parameters.scale_factor_constraints]
+            # list_ind = [index_scenario_bus[scenario][bus], bus_battery_start[bus]]
+            # model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+            #                              senses=constraint_direction,
+            #                              rhs=rhs,
+            #                              names=constraint_name)
+            constraint_name = [f"bus_g_equality_{scenario}_{bus}"]
+            constraint_direction = ["G"]
+            rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
+                1] * parameters.scale_factor_constraints]
+            list_c = [1 * parameters.scale_factor_constraints]
+            list_ind = [index_scenario_bus[scenario][bus]]
+            model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+                                         senses=constraint_direction,
+                                         rhs=rhs,
+                                         names=constraint_name)
+
+            # constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
+            # constraint_direction = ["L"]
+            # rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
+            #     1] * parameters.scale_factor_constraints]
+            # list_c = [1 * parameters.scale_factor_constraints]
+            # list_ind = [index_scenario_bus[scenario][bus]]
+            # model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+            #                              senses=constraint_direction,
+            #                              rhs=rhs,
+            #                              names=constraint_name)
 
     return model, dict_grid_index, dict_solar_index
 
@@ -668,6 +724,7 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
                                        dict_time_stamp_grid,
                                        start_time_stamp,
                                        dict_loc_time_non_bus,
+                                       bus_list_overall,
                                        variable_type,
                                        benders_strategy,
                                        parallel_mode,
@@ -679,7 +736,7 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
                                        use_renewables,
                                        dict_network_name,
                                        run_id,
-                                       model_time_limit=86400):
+                                       model_time_limit=172800):
     """
     This function creates the optimisation model for the charging scheduling problem
     :param dict_charging_opportunity_time_stamp: dictionary of bus number and charging event wise time stamp
@@ -690,6 +747,7 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
     :param dict_time_stamp_grid: dictionary of timestamp wise buses available at grid
     :param start_time_stamp: scenario-wise dict of start time of the model
     :param dict_loc_time_non_bus: dictionary of timestamps where buses are not present at the charging location
+    :param bus_list_overall: list of total buses available
     :param variable_type: type of variable continuous or Integer
     :param benders_strategy: benders strategy to be applied
     :param parallel_mode: parallel mode type
@@ -747,6 +805,7 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
                                                                                                        benders_annotation,
                                                                                                        object_type,
                                                                                                        network_name,
+                                                                                                       bus_list_overall,
                                                                                                        probability,
                                                                                                        renewable=use_renewables)
     end_time2 = time.time()
@@ -859,7 +918,7 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
     # model.parameters.threads.set(int(core))
 
     # Open a file to save the output
-    with open(f"output_{network_name}_{scenarios}_scenarios_benders_{apply_benders_cut}.txt", "w") as output_file:
+    with open(f"output_{network_name}_{scenarios}_scenarios_benders_{apply_benders_cut}_renewables_{use_renewables}.txt", "w") as output_file:
         # Set the log stream and results stream to the output file
         model.set_log_stream(output_file)
         model.set_results_stream(output_file)
