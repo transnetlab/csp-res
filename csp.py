@@ -105,7 +105,7 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                                                             object_type,
                                                             network: str,
                                                             bus_list_overall,
-                                                            probability=1 / 3,
+                                                            probability,
                                                             renewable=True):
     """
     This function adds decision variables for the model and energy constraints
@@ -276,7 +276,11 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                             list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
                             ################################################################################
 
-                    # constraint name for energy level EQUATIONS 4 & 12 from the paper
+                    # constraint name for energy level EQUATIONS 4 & 13 from the paper
+                    # NOTES #
+                    # Some charging opportunity indices are skipped in the code due to the layover time being zero
+                    # The first charging opportunity index in the paper corresponds
+                    # to the second charging opportunity index in the code
                     constraint_name_energy = [f"constraint_energy_{scenario}_{bus}_{charging_opportunity}"]
 
                     # initializing the energy level variable
@@ -371,6 +375,8 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
             #                              senses=constraint_direction,
             #                              rhs=rhs,
             #                              names=constraint_name)
+
+            # refer EQUATION 12 in the paper (>= part)
             constraint_name = [f"bus_g_equality_{scenario}_{bus}"]
             constraint_direction = ["G"]
             rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
@@ -381,7 +387,7 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                                          senses=constraint_direction,
                                          rhs=rhs,
                                          names=constraint_name)
-
+            # refer EQUATION 12 in the paper (<= part)
             constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
             constraint_direction = ["L"]
             rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
@@ -464,7 +470,7 @@ def add_solar_battery_level_and_max_energy_level_constraints(model,
                                                              object_type,
                                                              bender: bool,
                                                              network: str,
-                                                             probability=1 / 3):
+                                                             probability):
     """
     adds solar battery constraints and maximum battery level constraints for each charging location
     :param model: cplex model
@@ -597,7 +603,7 @@ def add_solar_battery_level_and_max_energy_level_constraints(model,
                 if time_stamp == end_time_stamp:
                     # add equality constraint for the last time stamp across the scenarios, first and last stamp
                     # energy are being updated in other loop
-                    # refer EQUATION 13  in the paper
+                    # refer EQUATION 14  in the paper
                     constraint_name = [f"battery_equality_{scenario}_{location}_{end_time_stamp}"]
                     constraint_direction = ["E"]
                     rhs = [0 * parameters.scale_factor_constraints]
@@ -918,7 +924,9 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
     # model.parameters.threads.set(int(core))
 
     # Open a file to save the output
-    with open(f"output_{network_name}_{scenarios}_scenarios_benders_{apply_benders_cut}_renewables_{use_renewables}.txt", "w") as output_file:
+    with open(
+            f"output_{network_name}_{scenarios}_scenarios_benders_{apply_benders_cut}_renewables_{use_renewables}.txt",
+            "w") as output_file:
         # Set the log stream and results stream to the output file
         model.set_log_stream(output_file)
         model.set_results_stream(output_file)
