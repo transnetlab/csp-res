@@ -288,6 +288,215 @@ def calculate_time_stamps_and_charging_opportunity(trip_schedule_df: pd.DataFram
     return dict_time_stamp, dict_charging_event_wise_time_stamp
 
 
+# def estimate_charging_opportunity_wise_energy_requirement(trip_schedule_df: pd.DataFrame,
+#                                                           dict_charging_event_wise_time_stamp: dict,
+#                                                           charging_locations: set,
+#                                                           number_of_scenarios: int,
+#                                                           network: str,
+#                                                           dict_depot_index: dict,
+#                                                           dict_terminal_mapping: dict,
+#                                                           temperature=True) -> dict:
+#     """
+#     :param trip_schedule_df: trip schedule dataframe
+#     :param dict_charging_event_wise_time_stamp: dictionary of scenario wise bus its charging event
+#                                                 and corresponding time stamps
+#     :param charging_locations: set of charging locations
+#     :param number_of_scenarios: total number of scenarios
+#     :param network: network name
+#     :param dict_depot_index: dictionary of depot index
+#     :param dict_terminal_mapping: dictionary of mapping cluster to terminal
+#     :param temperature: boolean value whether temperature variations considered or not
+#
+#     :return:
+#     dict_energy_required: dictionary of scenarios-wise energy required for every charging opportunity for each bus
+#     """
+#     dict_energy_required = {}
+#
+#     # location of files for energy consumption data should be in the same directory
+#     # if temperature variations are not considered, loading the energy consumption data from the pkl file only once.
+#     if not temperature:
+#         with open(f'./{network}/without_temperature/1_scenario/'
+#                   f'energy_consumption_trip/scenario_1_energy_consumption_trips.pkl', 'rb') as f:
+#             dict_trip_energy = pickle.load(f)
+#         with open(f'./{network}/without_temperature/1_scenario/'
+#                   f'energy_consumption_deadhead/scenario_1_energy_consumption_deadhead.pkl', 'rb') as f:
+#             dict_deadhead_energy = pickle.load(f)
+#
+#     total_energy_requirement = {scenario: 0 for scenario in range(1, number_of_scenarios + 1)}
+#     # for each scenario
+#     for scenario in tqdm(range(1, number_of_scenarios + 1), desc="Calculating energy required for each bus"):
+#
+#         # initializing dictionary for each scenario
+#         dict_energy_required[scenario] = {}
+#
+#         # list of bus number in the scenario
+#         bus_list = trip_schedule_df[f'bus_number_{scenario}'].unique()
+#
+#         # if temperature variations are considered, loading the energy consumption data from the pkl file for scenario
+#         if temperature:
+#             # open the file in pkl format for trip energy requirement
+#             with open(f'./{network}/{number_of_scenarios}_scenario/energy_consumption_trip/'
+#                       f'scenario_{scenario}_energy_consumption_trips.pkl', 'rb') as f:
+#                 dict_trip_energy = pickle.load(f)
+#
+#             # open the file in pkl format for deadhead energy requirement
+#             with open(f'./{network}/{number_of_scenarios}_scenario/energy_consumption_deadhead/'
+#                       f'scenario_{scenario}_energy_consumption_deadhead.pkl', 'rb') as f:
+#                 dict_deadhead_energy = pickle.load(f)
+#
+#         # for each bus in the scenario
+#         for bus in bus_list:
+#
+#             # initializing dictionary for each bus for that scenario
+#             dict_energy_required[scenario][bus] = {}
+#
+#             # copy the bus schedule for the bus
+#             bus_schedule = trip_schedule_df[trip_schedule_df[f'bus_number_{scenario}'] == bus].copy()
+#
+#             # first charging opportunity
+#             charging_opportunity = 1
+#
+#             # for given charging opportunity in the bus schedule, first charging stop is the depot
+#             first_charging_stop = dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity][-1]
+#
+#             # updating the first charging stop to the terminal based on clustering
+#             try:
+#                 updated_previous_stop = str((dict_terminal_mapping[first_charging_stop]))
+#             except KeyError:
+#                 updated_previous_stop = str(dict_terminal_mapping[int(first_charging_stop)])
+#             if updated_previous_stop != first_charging_stop:
+#                 first_charging_stop = updated_previous_stop
+#             else:
+#                 pass
+#             # if the network is Durham_2.1k, then the format is string
+#             if network == 'Durham_2.1k':
+#                 previous_charging_stop = str()
+#                 # find the key corresponding to the first charging stop value in depot index dictionary
+#                 for key, value in dict_depot_index.items():
+#                     if value == str(first_charging_stop):
+#                         previous_charging_stop = key
+#                         break
+#             else:
+#                 previous_charging_stop = int()
+#                 # find the key corresponding to the first charging stop value in depot index dictionary
+#                 for key, value in dict_depot_index.items():
+#                     if value == int(first_charging_stop):
+#                         previous_charging_stop = key
+#                         break
+#
+#             # adding deadheading stop to the dataframe to calculate deadhead energy required
+#             bus_schedule['deadheading_trip'] = bus_schedule.Trip_ID.shift(1).fillna(previous_charging_stop)
+#
+#             # make it as int type
+#             bus_schedule['deadheading_trip'] = bus_schedule['deadheading_trip'].astype(int)
+#
+#             # adding next deadheading stop to the dataframe for considering if start stop is charging location
+#             bus_schedule['start_deadheading_stop'] = bus_schedule.Start_Stop.shift(-1).fillna(first_charging_stop)
+#             bus_schedule['start_deadheading_trip'] = bus_schedule.Trip_ID.shift(-1).fillna(previous_charging_stop)
+#
+#             # make it as int type
+#             bus_schedule['start_deadheading_trip'] = bus_schedule['start_deadheading_trip'].astype(int)
+#
+#             # initializing the deadhead_trip_distance to 0
+#             deadhead_trip_distance = 0
+#
+#             # adding flag to check if start stop is charging location
+#             flag = True
+#
+#             # re-index the dataframe
+#             bus_schedule.reset_index(drop=True, inplace=True)
+#
+#             # for each trip in the bus schedule
+#             for index, row in bus_schedule.iterrows():
+#
+#                 # end stop of the trip
+#                 end_stop = str(row.End_Stop)
+#
+#                 # updating the end stop to the terminal based on clustering
+#                 try:
+#                     updated_end_stop = str((dict_terminal_mapping[end_stop]))
+#                 except KeyError:
+#                     updated_end_stop = str(dict_terminal_mapping[int(end_stop)])
+#                 if updated_end_stop != end_stop:
+#                     end_stop = updated_end_stop
+#                 else:
+#                     pass
+#
+#                 # trip name for the trip
+#                 trip = row.Trip_ID
+#                 try:
+#                     previous_dead_trip = str(int(row.deadheading_trip))
+#                     next_dead_stop = str(int(row.start_deadheading_stop))
+#                     next_dead_trip = str(int(row.start_deadheading_trip))
+#                 except ValueError:
+#                     previous_dead_trip = str(row.deadheading_trip)
+#                     next_dead_stop = str(row.start_deadheading_stop)
+#                     next_dead_trip = str(row.start_deadheading_trip)
+#
+#                 # updating the deadheading stop to the terminal based on clustering
+#                 try:
+#                     updated_next_dead_stop = str((dict_terminal_mapping[next_dead_stop]))
+#                 except KeyError:
+#                     updated_next_dead_stop = str(dict_terminal_mapping[int(next_dead_stop)])
+#                 if updated_next_dead_stop != next_dead_stop:
+#                     next_dead_stop = updated_next_dead_stop
+#                 else:
+#                     pass
+#
+#                 # when flag is false it will avoid adding distance between start stop and charging location because
+#                 # we have already added deadhead distance in condition of start stop being charging location and
+#                 # flag will become true again
+#                 if flag:
+#                     deadhead_trip_distance += round(dict_deadhead_energy[(int(previous_dead_trip), trip)], 3)
+#                 else:
+#                     deadhead_trip_distance += 0
+#                     flag = True
+#
+#                 # adding energy required for the given trip
+#                 deadhead_trip_distance += round(dict_trip_energy[trip], 3)
+#
+#                 # adding energy required for charging event if end stop is charging location to last charging location
+#                 # taking the instance in dataframe where its possible that last end stop is not charging location
+#                 if (end_stop in charging_locations) or (index == len(bus_schedule) - 1):
+#
+#                     if index == len(bus_schedule) - 1:
+#                         deadhead_trip_distance += round(dict_deadhead_energy[(trip, int(previous_charging_stop))], 3)
+#
+#                     # rounding the energy required to 3 decimal places
+#                     dict_energy_required[scenario][bus][charging_opportunity] = round(deadhead_trip_distance, 3)
+#
+#                     total_energy_requirement[scenario] += round(deadhead_trip_distance, 3)
+#                     # initializing the deadhead_trip_distance to 0
+#                     deadhead_trip_distance = 0
+#
+#                     # incrementing the charging opportunity
+#                     charging_opportunity += 1
+#
+#                 # adding energy required for charging event if start stop is charging location
+#                 elif next_dead_stop in charging_locations:
+#
+#                     # find the key corresponding to the next deadheading stop value in depot index dictionary
+#                     deadhead_trip_distance += round(dict_deadhead_energy[(trip, int(next_dead_trip))], 3)
+#
+#                     # rounding the energy required to 3 decimal places
+#                     dict_energy_required[scenario][bus][charging_opportunity] = round(deadhead_trip_distance, 3)
+#
+#                     total_energy_requirement[scenario] += round(deadhead_trip_distance, 3)
+#
+#                     # initializing the deadhead_trip_distance to 0
+#                     deadhead_trip_distance = 0
+#
+#                     # incrementing the charging opportunity
+#                     charging_opportunity += 1
+#
+#                     # setting flag to false
+#                     flag = False
+#
+#
+#     print("Total energy requirement for each scenario: ", total_energy_requirement)
+#
+#     return dict_energy_required
+
 def estimate_charging_opportunity_wise_energy_requirement(trip_schedule_df: pd.DataFrame,
                                                           dict_charging_event_wise_time_stamp: dict,
                                                           charging_locations: set,
@@ -308,185 +517,616 @@ def estimate_charging_opportunity_wise_energy_requirement(trip_schedule_df: pd.D
     :param temperature: boolean value whether temperature variations considered or not
 
     :return:
-    dict_energy_required: dictionary of scenarios-wise energy required for every charging opportunity for each bus
+    dict_energy_required: dictionary of scenarios-wise energy required for every
+                          valid charging opportunity for each bus
     """
+
     dict_energy_required = {}
 
-    # location of files for energy consumption data should be in the same directory
-    # if temperature variations are not considered, loading the energy consumption data from the pkl file only once.
+    # ------------------------------------------------------------
+    # If temperature variations are not considered, load the
+    # energy consumption data only once.
+    # ------------------------------------------------------------
+
     if not temperature:
         with open(f'./{network}/without_temperature/1_scenario/'
-                  f'energy_consumption_trip/scenario_1_energy_consumption_trips.pkl', 'rb') as f:
+                  f'energy_consumption_trip/'
+                  f'scenario_1_energy_consumption_trips.pkl', 'rb') as f:
             dict_trip_energy = pickle.load(f)
+
         with open(f'./{network}/without_temperature/1_scenario/'
-                  f'energy_consumption_deadhead/scenario_1_energy_consumption_deadhead.pkl', 'rb') as f:
+                  f'energy_consumption_deadhead/'
+                  f'scenario_1_energy_consumption_deadhead.pkl', 'rb') as f:
             dict_deadhead_energy = pickle.load(f)
 
-    # for each scenario
-    for scenario in tqdm(range(1, number_of_scenarios + 1), desc="Calculating energy required for each bus"):
+    # ------------------------------------------------------------
+    # Total energy requirement for each scenario
+    # ------------------------------------------------------------
+
+    total_energy_requirement = {
+        scenario: 0
+        for scenario in range(1, number_of_scenarios + 1)
+    }
+
+    # ------------------------------------------------------------
+    # For each scenario
+    # ------------------------------------------------------------
+
+    for scenario in tqdm(
+            range(1, number_of_scenarios + 1),
+            desc="Calculating energy required for each bus"):
 
         # initializing dictionary for each scenario
         dict_energy_required[scenario] = {}
 
         # list of bus number in the scenario
-        bus_list = trip_schedule_df[f'bus_number_{scenario}'].unique()
+        bus_list = trip_schedule_df[
+            f'bus_number_{scenario}'
+        ].unique()
 
-        # if temperature variations are considered, loading the energy consumption data from the pkl file for scenario
+        # --------------------------------------------------------
+        # If temperature variations are considered, load the
+        # scenario-specific energy consumption data.
+        # --------------------------------------------------------
+
         if temperature:
-            # open the file in pkl format for trip energy requirement
-            with open(f'./{network}/{number_of_scenarios}_scenario/energy_consumption_trip/'
-                      f'scenario_{scenario}_energy_consumption_trips.pkl', 'rb') as f:
+            # trip energy
+            with open(
+                    f'./{network}/{number_of_scenarios}_scenario/'
+                    f'energy_consumption_trip/'
+                    f'scenario_{scenario}_energy_consumption_trips.pkl',
+                    'rb') as f:
                 dict_trip_energy = pickle.load(f)
 
-            # open the file in pkl format for deadhead energy requirement
-            with open(f'./{network}/{number_of_scenarios}_scenario/energy_consumption_deadhead/'
-                      f'scenario_{scenario}_energy_consumption_deadhead.pkl', 'rb') as f:
+            # deadhead energy
+            with open(
+                    f'./{network}/{number_of_scenarios}_scenario/'
+                    f'energy_consumption_deadhead/'
+                    f'scenario_{scenario}_energy_consumption_deadhead.pkl',
+                    'rb') as f:
                 dict_deadhead_energy = pickle.load(f)
 
-        # for each bus in the scenario
+        # calculate and print the total energy consumption for the scenario for trips and deadhead
+        total_trip_energy = sum(dict_trip_energy.values())
+        total_deadhead_energy = sum(dict_deadhead_energy.values())
+        total_energy = total_trip_energy + total_deadhead_energy
+        print(f"Total energy consumption for scenario {scenario}:")
+        print(f"  Trip energy: {total_trip_energy:.3f} kWh")
+        print(f"  Deadhead energy: {total_deadhead_energy:.3f} kWh")
+        print(f"  Total energy: {total_energy:.3f} kWh")
+        # --------------------------------------------------------
+        # For each bus
+        # --------------------------------------------------------
+
         for bus in bus_list:
 
-            # initializing dictionary for each bus for that scenario
+            # initializing dictionary for each bus
             dict_energy_required[scenario][bus] = {}
 
-            # copy the bus schedule for the bus
-            bus_schedule = trip_schedule_df[trip_schedule_df[f'bus_number_{scenario}'] == bus].copy()
+            # ----------------------------------------------------
+            # Copy the bus schedule for the given bus
+            # ----------------------------------------------------
 
-            # first charging opportunity
+            bus_schedule = trip_schedule_df[
+                trip_schedule_df[f'bus_number_{scenario}'] == bus
+                ].copy()
+
+            # ----------------------------------------------------
+            # First charging opportunity
+            # ----------------------------------------------------
+
             charging_opportunity = 1
 
-            # for given charging opportunity in the bus schedule, first charging stop is the depot
-            first_charging_stop = dict_charging_event_wise_time_stamp[scenario][bus][charging_opportunity][-1]
+            # ----------------------------------------------------
+            # Energy from zero-duration charging opportunities.
+            #
+            # If an opportunity has no available charging time,
+            # its energy is carried forward and added to the next
+            # valid charging opportunity.
+            # ----------------------------------------------------
 
-            # updating the first charging stop to the terminal based on clustering
+            carried_energy = 0
+
+            # ----------------------------------------------------
+            # For given charging opportunity in the bus schedule,
+            # first charging stop is the depot.
+            # ----------------------------------------------------
+
+            first_charging_stop = (
+                dict_charging_event_wise_time_stamp
+                [scenario][bus][charging_opportunity][-1]
+            )
+
+            # ----------------------------------------------------
+            # Updating first charging stop to the terminal based
+            # on clustering.
+            # ----------------------------------------------------
+
             try:
-                updated_previous_stop = str((dict_terminal_mapping[first_charging_stop]))
+                updated_previous_stop = str(
+                    dict_terminal_mapping[first_charging_stop]
+                )
             except KeyError:
-                updated_previous_stop = str(dict_terminal_mapping[int(first_charging_stop)])
+                updated_previous_stop = str(
+                    dict_terminal_mapping[int(first_charging_stop)]
+                )
+
             if updated_previous_stop != first_charging_stop:
                 first_charging_stop = updated_previous_stop
-            else:
-                pass
-            # if the network is Durham_2.1k, then the format is string
+
+            # ----------------------------------------------------
+            # Find the key corresponding to the first charging
+            # stop value in depot index dictionary.
+            # ----------------------------------------------------
+
             if network == 'Durham_2.1k':
+
                 previous_charging_stop = str()
-                # find the key corresponding to the first charging stop value in depot index dictionary
+
                 for key, value in dict_depot_index.items():
                     if value == str(first_charging_stop):
                         previous_charging_stop = key
                         break
+
             else:
+
                 previous_charging_stop = int()
-                # find the key corresponding to the first charging stop value in depot index dictionary
+
                 for key, value in dict_depot_index.items():
                     if value == int(first_charging_stop):
                         previous_charging_stop = key
                         break
 
-            # adding deadheading stop to the dataframe to calculate deadhead energy required
-            bus_schedule['deadheading_trip'] = bus_schedule.Trip_ID.shift(1).fillna(previous_charging_stop)
+            # ----------------------------------------------------
+            # Adding deadheading stop to the dataframe to
+            # calculate deadhead energy requirement.
+            # ----------------------------------------------------
+
+            bus_schedule['deadheading_trip'] = (
+                bus_schedule.Trip_ID
+                .shift(1)
+                .fillna(previous_charging_stop)
+            )
 
             # make it as int type
-            bus_schedule['deadheading_trip'] = bus_schedule['deadheading_trip'].astype(int)
+            bus_schedule['deadheading_trip'] = (
+                bus_schedule['deadheading_trip'].astype(int)
+            )
 
-            # adding next deadheading stop to the dataframe for considering if start stop is charging location
-            bus_schedule['start_deadheading_stop'] = bus_schedule.Start_Stop.shift(-1).fillna(first_charging_stop)
-            bus_schedule['start_deadheading_trip'] = bus_schedule.Trip_ID.shift(-1).fillna(previous_charging_stop)
+            # ----------------------------------------------------
+            # Adding next deadheading stop to the dataframe for
+            # considering if start stop is charging location.
+            # ----------------------------------------------------
+
+            bus_schedule['start_deadheading_stop'] = (
+                bus_schedule.Start_Stop
+                .shift(-1)
+                .fillna(first_charging_stop)
+            )
+
+            bus_schedule['start_deadheading_trip'] = (
+                bus_schedule.Trip_ID
+                .shift(-1)
+                .fillna(previous_charging_stop)
+            )
 
             # make it as int type
-            bus_schedule['start_deadheading_trip'] = bus_schedule['start_deadheading_trip'].astype(int)
+            bus_schedule['start_deadheading_trip'] = (
+                bus_schedule['start_deadheading_trip'].astype(int)
+            )
 
-            # initializing the deadhead_trip_distance to 0
+            # ----------------------------------------------------
+            # Initialize energy requirement between charging
+            # opportunities.
+            # ----------------------------------------------------
+
             deadhead_trip_distance = 0
 
-            # adding flag to check if start stop is charging location
+            # ----------------------------------------------------
+            # Flag to check if start stop is charging location.
+            # ----------------------------------------------------
+
             flag = True
 
             # re-index the dataframe
             bus_schedule.reset_index(drop=True, inplace=True)
 
-            # for each trip in the bus schedule
+            # ----------------------------------------------------
+            # For each trip in bus schedule
+            # ----------------------------------------------------
+
             for index, row in bus_schedule.iterrows():
 
-                # end stop of the trip
+                # ------------------------------------------------
+                # End stop of the trip
+                # ------------------------------------------------
+
                 end_stop = str(row.End_Stop)
 
-                # updating the end stop to the terminal based on clustering
+                # updating the end stop to the terminal based on
+                # clustering
                 try:
-                    updated_end_stop = str((dict_terminal_mapping[end_stop]))
+                    updated_end_stop = str(
+                        dict_terminal_mapping[end_stop]
+                    )
                 except KeyError:
-                    updated_end_stop = str(dict_terminal_mapping[int(end_stop)])
+                    updated_end_stop = str(
+                        dict_terminal_mapping[int(end_stop)]
+                    )
+
                 if updated_end_stop != end_stop:
                     end_stop = updated_end_stop
-                else:
-                    pass
 
-                # trip name for the trip
+                # ------------------------------------------------
+                # Trip name
+                # ------------------------------------------------
+
                 trip = row.Trip_ID
-                try:
-                    previous_dead_trip = str(int(row.deadheading_trip))
-                    next_dead_stop = str(int(row.start_deadheading_stop))
-                    next_dead_trip = str(int(row.start_deadheading_trip))
-                except ValueError:
-                    previous_dead_trip = str(row.deadheading_trip)
-                    next_dead_stop = str(row.start_deadheading_stop)
-                    next_dead_trip = str(row.start_deadheading_trip)
 
-                # updating the deadheading stop to the terminal based on clustering
                 try:
-                    updated_next_dead_stop = str((dict_terminal_mapping[next_dead_stop]))
+                    previous_dead_trip = str(
+                        int(row.deadheading_trip)
+                    )
+
+                    next_dead_stop = str(
+                        int(row.start_deadheading_stop)
+                    )
+
+                    next_dead_trip = str(
+                        int(row.start_deadheading_trip)
+                    )
+
+                except ValueError:
+
+                    previous_dead_trip = str(
+                        row.deadheading_trip
+                    )
+
+                    next_dead_stop = str(
+                        row.start_deadheading_stop
+                    )
+
+                    next_dead_trip = str(
+                        row.start_deadheading_trip
+                    )
+
+                # ------------------------------------------------
+                # Updating the deadheading stop to the terminal
+                # based on clustering.
+                # ------------------------------------------------
+
+                try:
+                    updated_next_dead_stop = str(
+                        dict_terminal_mapping[next_dead_stop]
+                    )
                 except KeyError:
-                    updated_next_dead_stop = str(dict_terminal_mapping[int(next_dead_stop)])
+                    updated_next_dead_stop = str(
+                        dict_terminal_mapping[int(next_dead_stop)]
+                    )
+
                 if updated_next_dead_stop != next_dead_stop:
                     next_dead_stop = updated_next_dead_stop
-                else:
-                    pass
 
-                # when flag is false it will avoid adding distance between start stop and charging location because
-                # we have already added deadhead distance in condition of start stop being charging location and
-                # flag will become true again
+                # ------------------------------------------------
+                # When flag is false, avoid adding distance between
+                # start stop and charging location because it has
+                # already been added when the previous charging
+                # opportunity was processed.
+                # ------------------------------------------------
+
                 if flag:
-                    deadhead_trip_distance += round(dict_deadhead_energy[(int(previous_dead_trip), trip)], 3)
+
+                    deadhead_trip_distance += round(
+                        dict_deadhead_energy[
+                            (int(previous_dead_trip), trip)
+                        ],
+                        3
+                    )
+
                 else:
+
                     deadhead_trip_distance += 0
                     flag = True
 
-                # adding energy required for the given trip
-                deadhead_trip_distance += round(dict_trip_energy[trip], 3)
+                # ------------------------------------------------
+                # Add energy required for the given trip.
+                # ------------------------------------------------
 
-                # adding energy required for charging event if end stop is charging location to last charging location
-                # taking the instance in dataframe where its possible that last end stop is not charging location
-                if (end_stop in charging_locations) or (index == len(bus_schedule) - 1):
+                deadhead_trip_distance += round(
+                    dict_trip_energy[trip],
+                    3
+                )
+
+                # =================================================
+                # CASE 1:
+                #
+                # End stop is charging location OR this is the
+                # final trip of the bus.
+                # =================================================
+
+                if (
+                        end_stop in charging_locations
+                        or index == len(bus_schedule) - 1
+                ):
+
+                    # ------------------------------------------------
+                    # If this is the final trip, add deadheading
+                    # energy from the final trip to depot.
+                    # ------------------------------------------------
 
                     if index == len(bus_schedule) - 1:
-                        deadhead_trip_distance += round(dict_deadhead_energy[(trip, int(previous_charging_stop))], 3)
+                        deadhead_trip_distance += round(
+                            dict_deadhead_energy[
+                                (trip, int(previous_charging_stop))
+                            ],
+                            3
+                        )
 
-                    # rounding the energy required to 3 decimal places
-                    dict_energy_required[scenario][bus][charging_opportunity] = round(deadhead_trip_distance, 3)
+                    # ------------------------------------------------
+                    # Energy required from previous charging event
+                    # to this charging event.
+                    # ------------------------------------------------
 
-                    # initializing the deadhead_trip_distance to 0
+                    current_energy = round(
+                        deadhead_trip_distance,
+                        3
+                    )
+
+                    # ------------------------------------------------
+                    # CHECK WHETHER THIS CHARGING OPPORTUNITY
+                    # HAS VALID TIME AVAILABILITY.
+                    #
+                    # The first function creates:
+                    #
+                    # [timestamp1, timestamp2, ..., location]
+                    #
+                    # when:
+                    #
+                    # total_available_time -
+                    # time_taken_to_complete_next_deadhead > 0
+                    #
+                    # Otherwise it creates only:
+                    #
+                    # [location]
+                    #
+                    # Therefore, checking whether the list has
+                    # anything before the final location tells us
+                    # whether this opportunity is actually valid.
+                    # ------------------------------------------------
+
+                    charging_event = (
+                        dict_charging_event_wise_time_stamp
+                        [scenario][bus][charging_opportunity]
+                    )
+
+                    # Last element is location.
+                    # Everything before the last element is a
+                    # charging timestamp.
+                    available_time_stamps = charging_event[:-1]
+
+                    # ------------------------------------------------
+                    # VALID CHARGING OPPORTUNITY
+                    # ------------------------------------------------
+
+                    if len(available_time_stamps) > 0:
+
+                        # Add energy carried from any previous
+                        # zero-duration charging opportunities.
+                        current_energy += carried_energy
+
+                        current_energy = round(
+                            current_energy,
+                            3
+                        )
+
+                        # Store energy requirement for this
+                        # valid charging opportunity.
+                        dict_energy_required[
+                            scenario
+                        ][
+                            bus
+                        ][
+                            charging_opportunity
+                        ] = current_energy
+
+                        # Add to scenario total.
+                        total_energy_requirement[
+                            scenario
+                        ] += current_energy
+
+                        # Reset carried energy because it has now
+                        # been assigned to a valid opportunity.
+                        carried_energy = 0
+
+                    # ------------------------------------------------
+                    # ZERO-DURATION CHARGING OPPORTUNITY
+                    # ------------------------------------------------
+
+                    else:
+
+                        # There is no usable charging time at this
+                        # opportunity.
+                        #
+                        # Therefore, do NOT create an energy entry
+                        # for this charging opportunity.
+                        #
+                        # Carry the energy forward to the next
+                        # valid charging opportunity.
+                        carried_energy += current_energy
+
+                    # ------------------------------------------------
+                    # Reset energy accumulator.
+                    # ------------------------------------------------
+
                     deadhead_trip_distance = 0
 
-                    # incrementing the charging opportunity
+                    # ------------------------------------------------
+                    # Move to next charging opportunity.
+                    # ------------------------------------------------
+
                     charging_opportunity += 1
 
-                # adding energy required for charging event if start stop is charging location
+                # =================================================
+                # CASE 2:
+                #
+                # Start stop of the NEXT trip is a charging
+                # location.
+                # =================================================
+
                 elif next_dead_stop in charging_locations:
 
-                    # find the key corresponding to the next deadheading stop value in depot index dictionary
-                    deadhead_trip_distance += round(dict_deadhead_energy[(trip, int(next_dead_trip))], 3)
+                    # ------------------------------------------------
+                    # Add energy required for deadheading from the
+                    # current trip to the next charging location.
+                    # ------------------------------------------------
 
-                    # rounding the energy required to 3 decimal places
-                    dict_energy_required[scenario][bus][charging_opportunity] = round(deadhead_trip_distance, 3)
+                    deadhead_trip_distance += round(
+                        dict_deadhead_energy[
+                            (trip, int(next_dead_trip))
+                        ],
+                        3
+                    )
 
-                    # initializing the deadhead_trip_distance to 0
+                    current_energy = round(
+                        deadhead_trip_distance,
+                        3
+                    )
+
+                    # ------------------------------------------------
+                    # CHECK WHETHER THIS CHARGING OPPORTUNITY
+                    # HAS VALID TIME AVAILABILITY.
+                    # ------------------------------------------------
+
+                    charging_event = (
+                        dict_charging_event_wise_time_stamp
+                        [scenario][bus][charging_opportunity]
+                    )
+
+                    # Last element is location.
+                    # Everything before the last element is a
+                    # charging timestamp.
+                    available_time_stamps = charging_event[:-1]
+
+                    # ------------------------------------------------
+                    # VALID CHARGING OPPORTUNITY
+                    # ------------------------------------------------
+
+                    if len(available_time_stamps) > 0:
+
+                        # Carry forward energy from previous
+                        # zero-duration opportunities.
+                        current_energy += carried_energy
+
+                        current_energy = round(
+                            current_energy,
+                            3
+                        )
+
+                        # Store energy requirement for this
+                        # valid charging opportunity.
+                        dict_energy_required[
+                            scenario
+                        ][
+                            bus
+                        ][
+                            charging_opportunity
+                        ] = current_energy
+
+                        # Add to scenario total.
+                        total_energy_requirement[
+                            scenario
+                        ] += current_energy
+
+                        # Reset carried energy.
+                        carried_energy = 0
+
+                    # ------------------------------------------------
+                    # ZERO-DURATION CHARGING OPPORTUNITY
+                    # ------------------------------------------------
+
+                    else:
+
+                        # No charging can take place at this
+                        # opportunity.
+                        #
+                        # Carry the energy forward.
+                        carried_energy += current_energy
+
+                    # ------------------------------------------------
+                    # Reset energy accumulator.
+                    # ------------------------------------------------
+
                     deadhead_trip_distance = 0
 
-                    # incrementing the charging opportunity
+                    # ------------------------------------------------
+                    # Increment charging opportunity.
+                    # ------------------------------------------------
+
                     charging_opportunity += 1
 
-                    # setting flag to false
+                    # ------------------------------------------------
+                    # Set flag to false because the deadheading
+                    # energy from this trip to the charging location
+                    # has already been included above.
+                    # ------------------------------------------------
+
                     flag = False
+
+            # --------------------------------------------------------
+            # Diagnostic:
+            #
+            # If carried_energy > 0 after the final trip, then the
+            # final charging opportunity had zero available time and
+            # there was no subsequent valid charging opportunity.
+            # --------------------------------------------------------
+
+            # --------------------------------------------------------
+            # If energy remains after the final charging opportunity,
+            # assign it to the first charging opportunity.
+            #
+            # This implements a cyclic energy-accounting convention:
+            # energy that cannot be assigned at the final opportunity
+            # is allocated to the first charging opportunity.
+            # --------------------------------------------------------
+
+            if carried_energy > 0:
+
+                first_opportunity = 1
+
+                if first_opportunity in dict_energy_required[scenario][bus]:
+
+                    dict_energy_required[scenario][bus][first_opportunity] = round(
+                        dict_energy_required[scenario][bus][first_opportunity]
+                        + carried_energy,
+                        3
+                    )
+
+                    total_energy_requirement[scenario] += carried_energy
+
+                    print(
+                        f"INFO: Scenario {scenario}, Bus {bus}: "
+                        f"{round(carried_energy, 3)} kWh assigned to "
+                        f"the first charging opportunity."
+                    )
+
+                    carried_energy = 0
+
+                else:
+
+                    print(
+                        f"WARNING: Scenario {scenario}, Bus {bus}: "
+                        f"Final carried energy of {round(carried_energy, 3)} kWh "
+                        f"could not be assigned to charging opportunity 1."
+                    )
+
+    # ------------------------------------------------------------
+    # Print total energy requirement
+    # ------------------------------------------------------------
+
+    print(
+        "Total energy requirement for each scenario: ",
+        total_energy_requirement
+    )
 
     return dict_energy_required
 

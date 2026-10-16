@@ -95,6 +95,688 @@ def add_first_stage_variables(model,
     return model, dict_master_variables_index
 
 
+def add_master_only_constraints(model,
+                                dict_location_index,
+                                maximum_simultaneous_buses_file,
+                                energy_file,
+                                bus_wise_total_energy_file,
+                                charging_locations):
+    """
+    Adds constraints involving only first-stage/master variables.
+
+    Constraint 1:
+        z_j <= max_simultaneous_buses_j * Charging_rate * 60
+               + 0.9 * s_j * 60
+
+    Constraint 2:
+        0.9 * s_j <=
+        sum_{b: bus visits location j}
+        min(Max_battery_capacity - Min_battery_capacity,
+            total_energy_requirement_b)
+
+    IMPORTANT:
+    - Location names are NOT modified.
+    - Location names are used exactly as they appear in the CSV files.
+    - z_j and s_j are first-stage/master variables.
+    - The constraints themselves do not require Benders annotations.
+    """
+
+    # ============================================================
+    # Read CSV files
+    # ============================================================
+
+    max_sim_df = pd.read_csv(
+        maximum_simultaneous_buses_file
+    )
+
+    energy_df = pd.read_csv(
+        energy_file
+    )
+
+    bus_energy_df = pd.read_csv(
+        bus_wise_total_energy_file
+    )
+
+    # ============================================================
+    # DO NOT MODIFY LOCATION NAMES
+    # ============================================================
+
+    charging_locations_set = set(charging_locations)
+
+    # ============================================================
+    # CONSTRAINT 1
+    #
+    # z_j <= max_simultaneous_buses_j * mu * 60
+    #        + 0.9 * s_j * 60
+    #
+    # Rearranged:
+    #
+    # z_j - 0.9 * 60 * s_j
+    #        <= max_simultaneous_buses_j * mu * 60
+    # ============================================================
+
+    for _, row in max_sim_df.iterrows():
+
+        scenario = row["scenario"]
+        location = row["location"]
+        max_buses = float(row["max_simultaneous_buses"])
+
+        # --------------------------------------------------------
+        # Only consider candidate charging locations.
+        #
+        # IMPORTANT:
+        # location is used exactly as read from the CSV.
+        # --------------------------------------------------------
+
+        if location not in charging_locations_set:
+            continue
+
+        # --------------------------------------------------------
+        # First-stage/master variable names
+        # --------------------------------------------------------
+
+        grid_variable = "z_" + str(location)
+        battery_variable = "s_" + str(location)
+
+        # --------------------------------------------------------
+        # Check that both first-stage variables exist
+        # --------------------------------------------------------
+
+        if grid_variable not in dict_location_index:
+            print(
+                f"WARNING: Master variable {grid_variable} "
+                f"not found in dict_location_index."
+            )
+            continue
+
+        if battery_variable not in dict_location_index:
+            print(
+                f"WARNING: Master variable {battery_variable} "
+                f"not found in dict_location_index."
+            )
+            continue
+
+        # --------------------------------------------------------
+        # Get CPLEX variable indices
+        # --------------------------------------------------------
+
+        index_z = dict_location_index[grid_variable]
+        index_s = dict_location_index[battery_variable]
+
+        # --------------------------------------------------------
+        # z_j - 0.9 * 60 * s_j
+        # <= max_buses * Charging_rate * 60
+        # --------------------------------------------------------
+
+        list_ind = [
+            index_z,
+            index_s
+        ]
+
+        list_coeff = [
+            1.0 * parameters.scale_factor_constraints,
+            -parameters.depth_of_discharge * 60.0 * parameters.scale_factor_constraints
+        ]
+
+        rhs = (
+                max_buses
+                * parameters.Charging_rate
+                * 60.0
+                * parameters.scale_factor_constraints
+        )
+
+        constraint_name = (
+            f"master_grid_capacity_{scenario}_{location}"
+        )
+
+        model.linear_constraints.add(
+            lin_expr=[
+                cplex.SparsePair(
+                    ind=list_ind,
+                    val=list_coeff
+                )
+            ],
+            senses=["L"],
+            rhs=[rhs],
+            names=[constraint_name]
+        )
+
+    # ============================================================
+    # CONSTRAINT 2
+    #
+    # 0.9 * s_j <=
+    #
+    # sum_{b: bus visits location j}
+    # min(Max_battery_capacity - Min_battery_capacity,
+    #     total_energy_requirement_b)
+    #
+    # Here:
+    #
+    # - energy.csv is used ONLY to determine which buses
+    #   visit which locations.
+    #
+    # - bus_wise_total_energy.csv already contains the
+    #   total_energy_requirement for each bus.
+    #
+    # ============================================================
+
+    # ------------------------------------------------------------
+    # Identify unique bus-location combinations.
+    #
+    # If a bus visits the same location multiple times,
+    # it is counted only ONCE for that location.
+    #
+    # Location names are NOT modified.
+    # ------------------------------------------------------------
+
+    bus_location = (
+        energy_df[
+            [
+                "scenario",
+                "bus",
+                "location"
+            ]
+        ]
+        .drop_duplicates()
+    )
+
+    # ------------------------------------------------------------
+    # Attach the already-calculated total energy requirement.
+    #
+    # bus_wise_total_energy.csv:
+    #
+    # scenario | bus | total_energy_requirement
+    #
+    # ------------------------------------------------------------
+
+    bus_location_energy = bus_location.merge(
+        bus_energy_df[
+            [
+                "scenario",
+                "bus",
+                "total_energy_requirement"
+            ]
+        ],
+        on=[
+            "scenario",
+            "bus"
+        ],
+        how="left"
+    )
+
+    # ------------------------------------------------------------
+    # Battery energy range:
+    #
+    # Max battery capacity - Min battery capacity
+    # ------------------------------------------------------------
+
+    battery_energy_range = (
+            parameters.Max_battery_capacity
+            - parameters.Min_battery_capacity
+    )
+
+    # ------------------------------------------------------------
+    # Make sure total energy requirement is numeric.
+    # ------------------------------------------------------------
+
+    bus_location_energy[
+        "total_energy_requirement"
+    ] = pd.to_numeric(
+        bus_location_energy[
+            "total_energy_requirement"
+        ],
+        errors="coerce"
+    )
+
+    # ------------------------------------------------------------
+    # Apply:
+    #
+    # min(
+    #     Max_battery_capacity - Min_battery_capacity,
+    #     total_energy_requirement_b
+    # )
+    #
+    # for each unique bus-location pair.
+    # ------------------------------------------------------------
+
+    bus_location_energy[
+        "capped_energy"
+    ] = (
+        bus_location_energy[
+            "total_energy_requirement"
+        ]
+        .clip(
+            upper=battery_energy_range
+        )
+    )
+
+    # ------------------------------------------------------------
+    # Sum capped energy over buses visiting each location.
+    #
+    # Result:
+    #
+    # scenario | location | capped_energy
+    #
+    # ------------------------------------------------------------
+
+    location_energy_requirement = (
+        bus_location_energy
+        .groupby(
+            [
+                "scenario",
+                "location"
+            ],
+            as_index=False
+        )[
+            "capped_energy"
+        ]
+        .sum()
+    )
+
+    # ============================================================
+    # Add Constraint 2:
+    #
+    # 0.9 * s_j <= RHS
+    # ============================================================
+
+    for _, row in location_energy_requirement.iterrows():
+
+        scenario = row["scenario"]
+        location = row["location"]
+        rhs_energy = float(
+            row["capped_energy"]
+        )
+
+        # --------------------------------------------------------
+        # Only consider candidate charging locations.
+        #
+        # IMPORTANT:
+        # Do NOT clean, strip, replace, or otherwise modify
+        # the location string.
+        # --------------------------------------------------------
+
+        if location not in charging_locations_set:
+            continue
+
+        # --------------------------------------------------------
+        # First-stage/master BESS variable
+        # --------------------------------------------------------
+
+        battery_variable = "s_" + str(location)
+
+        # --------------------------------------------------------
+        # Check that the master variable exists
+        # --------------------------------------------------------
+
+        if battery_variable not in dict_location_index:
+            print(
+                f"WARNING: Master variable {battery_variable} "
+                f"not found in dict_location_index."
+            )
+            continue
+
+        # --------------------------------------------------------
+        # Get CPLEX variable index
+        # --------------------------------------------------------
+
+        index_s = dict_location_index[
+            battery_variable
+        ]
+
+        # --------------------------------------------------------
+        # 0.9 * s_j <= RHS
+        # --------------------------------------------------------
+
+        model.linear_constraints.add(
+            lin_expr=[
+                cplex.SparsePair(
+                    ind=[index_s],
+                    val=[
+                        parameters.depth_of_discharge
+                        * parameters.scale_factor_constraints
+                    ]
+                )
+            ],
+            senses=["L"],
+            rhs=[
+                rhs_energy
+                * parameters.scale_factor_constraints
+            ],
+            names=[
+                f"master_battery_energy_{scenario}_{location}"
+            ]
+        )
+
+    print(
+        "Master-only constraints added successfully."
+    )
+
+    return model
+
+
+# def add_decision_variables_and_bus_energy_level_constraints(model,
+#                                                             scenarios: int,
+#                                                             dict_charging_event: dict,
+#                                                             dict_energy: dict,
+#                                                             dict_grid: dict,
+#                                                             bender: bool,
+#                                                             benders_annotation,
+#                                                             object_type,
+#                                                             network: str,
+#                                                             bus_list_overall,
+#                                                             probability,
+#                                                             renewable=True):
+#     """
+#     This function adds decision variables for the model and energy constraints
+#     :param model: cplex model
+#     :param scenarios: number of scenarios
+#     :param dict_charging_event: dictionary of bus number and charging event wise time stamp
+#     :param dict_energy: dictionary of energy required for each charging event
+#     :param dict_grid: dictionary of timestamp wise buses available at grid
+#     :param bender: boolean value to add benders cut or not
+#     :param benders_annotation: annotation for benders cut
+#     :param object_type: type of variable for benders cut
+#     :param network: name of the network
+#     :param bus_list_overall: list of total buses available
+#     :param probability: probability of the scenario
+#     :param renewable: renewable energy integration considered or not
+#     :return:
+#     model: cplex model
+#     dict_grid_index: Indices corresponding to the grid to bus variables
+#     dict_solar_index: Indices corresponding to the BESS to bus variables
+#     """
+#
+#     # initializing the dict_grid_index and dict_solar_index to store index of buses
+#     # charging variables present at that time stamp
+#     dict_grid_index = {}
+#     dict_solar_index = {}
+#
+#     energy_records = []
+#
+#     # for each scenario
+#     for scenario in range(1, scenarios + 1):
+#         dict_grid_index[scenario] = {}
+#         dict_solar_index[scenario] = {}
+#
+#         # for each time stamp the buses are available at the grid
+#         for keys, v in dict_grid[scenario].items():
+#             dict_grid_index[scenario][keys] = {}
+#             dict_solar_index[scenario][keys] = {}
+#
+#             # for each bus available at the grid
+#             for value_key in v.keys():
+#                 dict_grid_index[scenario][keys][value_key] = []
+#                 dict_solar_index[scenario][keys][value_key] = []
+#
+#     # add bus-specific initial energy level variables across scenarios (same master variable)
+#     # for all the buses in bus_overall_list
+#     # bus_battery_start = {}
+#     # for bus in bus_list_overall:
+#     #     constant_energy_bus = "q" + "_" + str(bus)
+#     #     index_energy_bus_init = list(
+#     #         model.variables.add(names=[constant_energy_bus], lb=[parameters.lower_bound_master_variables],
+#     #                             ub=[parameters.Max_battery_capacity],
+#     #                             types=["C"]))[0]
+#     #     bus_battery_start[bus] = index_energy_bus_init
+#     #
+#     #     # adding annotation if benders cut is applied
+#     #     if bender:
+#     #         model.long_annotations.set_values(benders_annotation, object_type, index_energy_bus_init, 0)
+#
+#     index_scenario_bus = {}
+#     # iterating over the scenarios
+#     for scenario in tqdm(range(1, scenarios + 1), desc="Adding scenarios wise decision variables and allowed "
+#                                                        "transfer from grid or solar-powered battery"):
+#
+#         # iterating over the buses
+#         index_scenario_bus[scenario] = {}
+#         for bus, time_stamps_for_charging_opportunity in dict_charging_event[scenario].items():
+#
+#             # for tracking energy level at the previous charging event
+#             previous_charging_event_stamp_index = int()
+#             index_energy = int()
+#
+#             # for tracking the last charging event and initializing the last index energy
+#             last_charging_event = list(time_stamps_for_charging_opportunity.keys())[-1]
+#             last_index_energy = int()
+#
+#             # iterating over all the charging events
+#             for charging_opportunity, time_stamps in time_stamps_for_charging_opportunity.items():
+#
+#                 # adding constraints for the charging event only if any opportunity exists
+#                 if len(time_stamps) > 1:
+#                     #############################################################################################
+#                     # storing index and coefficient in the following list
+#                     list_index_energy = []
+#                     list_coefficient_energy = []
+#                     #############################################################################################
+#
+#                     # iterating over the time stamp for the charging event
+#                     for index, time_stamp in enumerate(time_stamps[:-1]):
+#
+#                         # location is stored in the last index of the time_stamps
+#                         location = time_stamps[-1]
+#
+#                         # energy from grid x_{bjt}^{w}
+#                         x_variable = ("x" + "_" + str(scenario) + "_" + str(bus) + "_" +
+#                                       str(location) + "_" + str(time_stamp))
+#
+#                         # coefficient for the x variable will be the price of the energy at that time stamp
+#                         # and the probability of the scenario
+#                         objective_coefficient = np.asarray([tou_pricing_time_stamp_wise(time_stamp,
+#                                                                                         scenario, scenarios,
+#                                                                                         network) * parameters.scale_factor_objective],
+#                                                            dtype=np.float64) * probability
+#
+#                         # adding the x variable to the model
+#                         index_x = model.variables.add(obj=objective_coefficient, names=[x_variable], types=["C"],
+#                                                       lb=[0],
+#                                                       ub=[parameters.Charging_rate])
+#                         # print(scenario, bus, location, time_stamp)
+#                         # print(index_x)
+#                         # print(list(index_x))
+#                         # print(list(index_x)[0])
+#                         #################################################################################
+#                         # adding index of the buses available at the depot for charging
+#                         # at that time stamp to grid and solar dict
+#                         dict_grid_index[scenario][time_stamp][location].append(list(index_x)[0])
+#
+#                         # adding annotation if benders cut is applied
+#                         if bender:
+#                             model.long_annotations.set_values(benders_annotation, object_type, list(index_x)[0],
+#                                                               scenario)
+#
+#                         # adding index and coefficient for the x and y variable for that charging opportunity/event
+#                         list_index_energy.append(list(index_x)[0])
+#                         list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+#                         #################################################################################
+#
+#                         # adding y variables only if renewables are considered
+#                         if renewable:
+#
+#                             # energy from solar-powered battery y_{bjt}^{w}
+#                             y_variable = ("y" + "_" + str(scenario) + "_" + str(bus) + "_" +
+#                                           str(location) + "_" + str(time_stamp))
+#
+#                             # coefficient for the y variable will be the price of the energy at that time stamp
+#                             objective_coefficient = np.asarray(
+#                                 [parameters.Solar_energy_price * parameters.scale_factor_objective],
+#                                 dtype=np.float64) * probability
+#
+#                             # adding the y variable to the model
+#                             index_y = model.variables.add(obj=objective_coefficient, names=[y_variable], types=["C"],
+#                                                           lb=[0],
+#                                                           ub=[parameters.Solar_battery_charging_rate])
+#
+#                             # annotation for the benders cut
+#                             if bender:
+#                                 model.long_annotations.set_values(benders_annotation, object_type, list(index_y)[0],
+#                                                                   scenario)
+#
+#                             # introducing the maximum energy transfer constraint EQUATION 10 in the paper
+#                             constraint_names = [f"maximum_transfer_{scenario}_{bus}_{location}_{time_stamp}"]
+#
+#                             # constraint index for the energy transfer constraint
+#                             constraint_indices = [list(index_y)[0], list(index_x)[0]]
+#
+#                             # maximum energy transfer constraint either from grid or solar
+#                             list_coefficient = [1 * parameters.scale_factor_constraints,
+#                                                 1 * parameters.scale_factor_constraints]
+#                             constraint_direction = ['L']
+#                             rhs = [parameters.Charging_rate * parameters.scale_factor_constraints]
+#                             model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=constraint_indices,
+#                                                                                     val=list_coefficient)],
+#                                                          senses=constraint_direction,
+#                                                          rhs=rhs,
+#                                                          names=constraint_names)
+#
+#                             # adding index and coefficient for the y variable for that charging opportunity/event
+#                             dict_solar_index[scenario][time_stamp][location].append(list(index_y)[0])
+#                             #################################################################################
+#                             list_index_energy.append(list(index_y)[0])
+#                             list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+#                             ################################################################################
+#
+#                     # constraint name for energy level EQUATIONS 4 & 13 from the paper
+#                     # NOTES #
+#                     # Some charging opportunity indices are skipped in the code due to the layover time being zero
+#                     # The first charging opportunity index in the paper corresponds
+#                     # to the second charging opportunity index in the code
+#                     constraint_name_energy = [f"constraint_energy_{scenario}_{bus}_{charging_opportunity}"]
+#
+#                     # initializing the energy level variable
+#                     string_name_energy = 'u' + "_" + str(scenario) + "_" + str(bus) + "_" + str(charging_opportunity)
+#
+#                     # adding energy level variable except for last charging event
+#                     if charging_opportunity != last_charging_event:
+#                         index_energy = list(model.variables.add(names=[string_name_energy],
+#                                                                 lb=[parameters.Min_battery_capacity],
+#                                                                 ub=[parameters.Max_battery_capacity], types=["C"]))[0]
+#
+#                         if charging_opportunity == 1:
+#                             index_scenario_bus[scenario][bus] = index_energy
+#
+#                         # adding annotation if benders cut is applied
+#                         if bender:
+#                             model.long_annotations.set_values(benders_annotation, object_type, index_energy, scenario)
+#
+#                     # for 1st charging event, introducing the last charging event energy level variable for periodicity
+#                     if charging_opportunity == 1:
+#                         last_event_string = "u" + "_" + str(scenario) + "_" + str(bus) + "_" + str(last_charging_event)
+#                         last_index_energy = list(model.variables.add(names=[last_event_string],
+#                                                                      lb=[parameters.Min_battery_capacity],
+#                                                                      ub=[parameters.Max_battery_capacity],
+#                                                                      types=["C"]))[0]
+#
+#                         if last_charging_event == 1:
+#                             index_scenario_bus[scenario][bus] = last_index_energy
+#
+#                         # adding annotation if benders cut is applied
+#                         if bender:
+#                             model.long_annotations.set_values(benders_annotation, object_type, last_index_energy,
+#                                                               scenario)
+#
+#                         # adding index and coefficient for the last charging event energy level variable
+#                         if len(time_stamps_for_charging_opportunity) > 1:
+#                             list_index_energy.append(last_index_energy)
+#                             list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+#                         else:
+#                             pass
+#
+#                     # else allowing previous charging event energy level variable
+#                     else:
+#                         list_index_energy.append(previous_charging_event_stamp_index)
+#                         list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+#
+#                     # for max allowed energy transfer, extracting the index and
+#                     # coefficient from the list index and coefficient
+#                     constraint_indices_max = [i for i in list_index_energy]
+#                     list_coefficient_max = [-i for i in list_coefficient_energy]
+#
+#                     # if there is only one charging event, then the first and last energy level variable will be same
+#                     if len(time_stamps_for_charging_opportunity) > 1:
+#                         list_coefficient_energy.append(1 * parameters.scale_factor_constraints)
+#                         if charging_opportunity == last_charging_event:
+#                             list_index_energy.append(last_index_energy)
+#                         else:
+#                             list_index_energy.append(index_energy)
+#                     else:
+#                         pass
+#
+#                     # adding direction and rhs for the energy level constraint
+#                     constraint_direction = ["E"]
+#                     # print(scenario, bus, charging_opportunity)
+#                     rhs = [-dict_energy[scenario][bus][charging_opportunity] * parameters.scale_factor_constraints]
+#                     model.linear_constraints.add(
+#                         lin_expr=[cplex.SparsePair(ind=list_index_energy, val=list_coefficient_energy)],
+#                         senses=constraint_direction,
+#                         rhs=rhs,
+#                         names=constraint_name_energy)
+#
+#                     energy = dict_energy[scenario][bus][charging_opportunity]
+#
+#                     energy_records.append({
+#                         "scenario": scenario,
+#                         "bus": bus,
+#                         "charging_opportunity": charging_opportunity,
+#                         "energy": energy,
+#                         "timesteps": ",".join(str(t) for t in time_stamps),
+#                         "location": location
+#                     })
+#                     ###########################################################################################
+#                     # max energy level constraint
+#                     # EQUATION 5 from the paper
+#                     constraint_name_max_energy = [f"maximum_energy_{scenario}_{bus}_{charging_opportunity}"]
+#                     constraint_direction = ["L"]
+#                     rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints]
+#                     model.linear_constraints.add(
+#                         lin_expr=[cplex.SparsePair(ind=constraint_indices_max, val=list_coefficient_max)],
+#                         senses=constraint_direction,
+#                         rhs=rhs,
+#                         names=constraint_name_max_energy)
+#
+#                 # storing the current energy level variable index for the next charging event
+#                 previous_charging_event_stamp_index = index_energy
+#
+#             # constraint_name = [f"bus_equality_{scenario}_{bus}"]
+#             # constraint_direction = ["E"]
+#             # rhs = [0 * parameters.scale_factor_constraints]
+#             # list_c = [1 * parameters.scale_factor_constraints, -1 * parameters.scale_factor_constraints]
+#             # list_ind = [index_scenario_bus[scenario][bus], bus_battery_start[bus]]
+#             # model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+#             #                              senses=constraint_direction,
+#             #                              rhs=rhs,
+#             #                              names=constraint_name)
+#
+#             # refer EQUATION 12 in the paper (>= part)
+#             constraint_name = [f"bus_g_equality_{scenario}_{bus}"]
+#             constraint_direction = ["G"]
+#             rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
+#                 1] * parameters.scale_factor_constraints]
+#             list_c = [1 * parameters.scale_factor_constraints]
+#             list_ind = [index_scenario_bus[scenario][bus]]
+#             model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+#                                          senses=constraint_direction,
+#                                          rhs=rhs,
+#                                          names=constraint_name)
+#             # refer EQUATION 12 in the paper (<= part)
+#             constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
+#             constraint_direction = ["L"]
+#             rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
+#                 1] * parameters.scale_factor_constraints]
+#             list_c = [1 * parameters.scale_factor_constraints]
+#             list_ind = [index_scenario_bus[scenario][bus]]
+#             model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
+#                                          senses=constraint_direction,
+#                                          rhs=rhs,
+#                                          names=constraint_name)
+#
+#     energy_df = pd.DataFrame(energy_records)
+#
+#     energy_df.to_csv("energy.csv", index=False)
+#
+#     return model, dict_grid_index, dict_solar_index
+
 def add_decision_variables_and_bus_energy_level_constraints(model,
                                                             scenarios: int,
                                                             dict_charging_event: dict,
@@ -132,6 +814,8 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
     dict_grid_index = {}
     dict_solar_index = {}
 
+    energy_records = []
+
     # for each scenario
     for scenario in range(1, scenarios + 1):
         dict_grid_index[scenario] = {}
@@ -154,8 +838,7 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
     #     constant_energy_bus = "q" + "_" + str(bus)
     #     index_energy_bus_init = list(
     #         model.variables.add(names=[constant_energy_bus], lb=[parameters.lower_bound_master_variables],
-    #                             ub=[parameters.Max_battery_capacity],
-    #                             types=["C"]))[0]
+    #                             ub=[parameters.Max_battery_capacity], types=["C"]))[0]
     #     bus_battery_start[bus] = index_energy_bus_init
     #
     #     # adding annotation if benders cut is applied
@@ -163,12 +846,16 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
     #         model.long_annotations.set_values(benders_annotation, object_type, index_energy_bus_init, 0)
 
     index_scenario_bus = {}
+
     # iterating over the scenarios
-    for scenario in tqdm(range(1, scenarios + 1), desc="Adding scenarios wise decision variables and allowed "
-                                                       "transfer from grid or solar-powered battery"):
+    for scenario in tqdm(
+            range(1, scenarios + 1),
+            desc="Adding scenarios wise decision variables and allowed "
+                 "transfer from grid or solar-powered battery"):
 
         # iterating over the buses
         index_scenario_bus[scenario] = {}
+
         for bus, time_stamps_for_charging_opportunity in dict_charging_event[scenario].items():
 
             # for tracking energy level at the previous charging event
@@ -182,8 +869,12 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
             # iterating over all the charging events
             for charging_opportunity, time_stamps in time_stamps_for_charging_opportunity.items():
 
-                # adding constraints for the charging event only if any opportunity exists
+                # -------------------------------------------------------------------------
+                # NORMAL CHARGING OPPORTUNITY
+                # -------------------------------------------------------------------------
+
                 if len(time_stamps) > 1:
+
                     #############################################################################################
                     # storing index and coefficient in the following list
                     list_index_energy = []
@@ -197,207 +888,460 @@ def add_decision_variables_and_bus_energy_level_constraints(model,
                         location = time_stamps[-1]
 
                         # energy from grid x_{bjt}^{w}
-                        x_variable = ("x" + "_" + str(scenario) + "_" + str(bus) + "_" +
-                                      str(location) + "_" + str(time_stamp))
+                        x_variable = (
+                                "x" + "_" + str(scenario) + "_" + str(bus) + "_" +
+                                str(location) + "_" + str(time_stamp)
+                        )
 
-                        # coefficient for the x variable will be the price of the energy at that time stamp
-                        # and the probability of the scenario
-                        objective_coefficient = np.asarray([tou_pricing_time_stamp_wise(time_stamp,
-                                                                                        scenario, scenarios,
-                                                                                        network) * parameters.scale_factor_objective],
-                                                           dtype=np.float64) * probability
+                        # coefficient for the x variable will be the price of the energy
+                        # at that time stamp and the probability of the scenario
+                        objective_coefficient = np.asarray(
+                            [
+                                tou_pricing_time_stamp_wise(
+                                    time_stamp,
+                                    scenario,
+                                    scenarios,
+                                    network
+                                ) * parameters.scale_factor_objective
+                            ],
+                            dtype=np.float64
+                        ) * probability
 
                         # adding the x variable to the model
-                        index_x = model.variables.add(obj=objective_coefficient, names=[x_variable], types=["C"],
-                                                      lb=[0],
-                                                      ub=[parameters.Charging_rate])
-                        # print(scenario, bus, location, time_stamp)
-                        # print(index_x)
-                        # print(list(index_x))
-                        # print(list(index_x)[0])
-                        #################################################################################
+                        index_x = model.variables.add(
+                            obj=objective_coefficient,
+                            names=[x_variable],
+                            types=["C"],
+                            lb=[0],
+                            ub=[parameters.Charging_rate]
+                        )
+
                         # adding index of the buses available at the depot for charging
                         # at that time stamp to grid and solar dict
-                        dict_grid_index[scenario][time_stamp][location].append(list(index_x)[0])
+                        dict_grid_index[scenario][time_stamp][location].append(
+                            list(index_x)[0]
+                        )
 
                         # adding annotation if benders cut is applied
                         if bender:
-                            model.long_annotations.set_values(benders_annotation, object_type, list(index_x)[0],
-                                                              scenario)
+                            model.long_annotations.set_values(
+                                benders_annotation,
+                                object_type,
+                                list(index_x)[0],
+                                scenario
+                            )
 
-                        # adding index and coefficient for the x and y variable for that charging opportunity/event
+                        # adding index and coefficient for the x variable
                         list_index_energy.append(list(index_x)[0])
-                        list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+                        list_coefficient_energy.append(
+                            -1 * parameters.scale_factor_constraints
+                        )
+
                         #################################################################################
 
                         # adding y variables only if renewables are considered
                         if renewable:
 
                             # energy from solar-powered battery y_{bjt}^{w}
-                            y_variable = ("y" + "_" + str(scenario) + "_" + str(bus) + "_" +
-                                          str(location) + "_" + str(time_stamp))
+                            y_variable = (
+                                    "y" + "_" + str(scenario) + "_" + str(bus) + "_" +
+                                    str(location) + "_" + str(time_stamp)
+                            )
 
-                            # coefficient for the y variable will be the price of the energy at that time stamp
+                            # coefficient for the y variable
                             objective_coefficient = np.asarray(
-                                [parameters.Solar_energy_price * parameters.scale_factor_objective],
-                                dtype=np.float64) * probability
+                                [
+                                    parameters.Solar_energy_price *
+                                    parameters.scale_factor_objective
+                                ],
+                                dtype=np.float64
+                            ) * probability
 
                             # adding the y variable to the model
-                            index_y = model.variables.add(obj=objective_coefficient, names=[y_variable], types=["C"],
-                                                          lb=[0],
-                                                          ub=[parameters.Solar_battery_charging_rate])
+                            index_y = model.variables.add(
+                                obj=objective_coefficient,
+                                names=[y_variable],
+                                types=["C"],
+                                lb=[0],
+                                ub=[parameters.Solar_battery_charging_rate]
+                            )
 
                             # annotation for the benders cut
                             if bender:
-                                model.long_annotations.set_values(benders_annotation, object_type, list(index_y)[0],
-                                                                  scenario)
+                                model.long_annotations.set_values(
+                                    benders_annotation,
+                                    object_type,
+                                    list(index_y)[0],
+                                    scenario
+                                )
 
-                            # introducing the maximum energy transfer constraint EQUATION 10 in the paper
-                            constraint_names = [f"maximum_transfer_{scenario}_{bus}_{location}_{time_stamp}"]
+                            # introducing the maximum energy transfer constraint
+                            # EQUATION 10 in the paper
+                            constraint_names = [
+                                f"maximum_transfer_{scenario}_{bus}_{location}_{time_stamp}"
+                            ]
 
-                            # constraint index for the energy transfer constraint
-                            constraint_indices = [list(index_y)[0], list(index_x)[0]]
+                            constraint_indices = [
+                                list(index_y)[0],
+                                list(index_x)[0]
+                            ]
 
                             # maximum energy transfer constraint either from grid or solar
-                            list_coefficient = [1 * parameters.scale_factor_constraints,
-                                                1 * parameters.scale_factor_constraints]
-                            constraint_direction = ['L']
-                            rhs = [parameters.Charging_rate * parameters.scale_factor_constraints]
-                            model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=constraint_indices,
-                                                                                    val=list_coefficient)],
-                                                         senses=constraint_direction,
-                                                         rhs=rhs,
-                                                         names=constraint_names)
+                            list_coefficient = [
+                                1 * parameters.scale_factor_constraints,
+                                1 * parameters.scale_factor_constraints
+                            ]
 
-                            # adding index and coefficient for the y variable for that charging opportunity/event
-                            dict_solar_index[scenario][time_stamp][location].append(list(index_y)[0])
+                            constraint_direction = ['L']
+
+                            rhs = [
+                                parameters.Charging_rate *
+                                parameters.scale_factor_constraints
+                            ]
+
+                            model.linear_constraints.add(
+                                lin_expr=[
+                                    cplex.SparsePair(
+                                        ind=constraint_indices,
+                                        val=list_coefficient
+                                    )
+                                ],
+                                senses=constraint_direction,
+                                rhs=rhs,
+                                names=constraint_names
+                            )
+
+                            # adding index and coefficient for the y variable
+                            dict_solar_index[scenario][time_stamp][location].append(
+                                list(index_y)[0]
+                            )
+
                             #################################################################################
                             list_index_energy.append(list(index_y)[0])
-                            list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+                            list_coefficient_energy.append(
+                                -1 * parameters.scale_factor_constraints
+                            )
                             ################################################################################
 
-                    # constraint name for energy level EQUATIONS 4 & 13 from the paper
-                    # NOTES #
-                    # Some charging opportunity indices are skipped in the code due to the layover time being zero
-                    # The first charging opportunity index in the paper corresponds
-                    # to the second charging opportunity index in the code
-                    constraint_name_energy = [f"constraint_energy_{scenario}_{bus}_{charging_opportunity}"]
+                    # constraint name for energy level EQUATIONS 4 & 13
+                    constraint_name_energy = [
+                        f"constraint_energy_{scenario}_{bus}_{charging_opportunity}"
+                    ]
 
                     # initializing the energy level variable
-                    string_name_energy = 'u' + "_" + str(scenario) + "_" + str(bus) + "_" + str(charging_opportunity)
+                    string_name_energy = (
+                            'u' + "_" + str(scenario) + "_" + str(bus) + "_" +
+                            str(charging_opportunity)
+                    )
 
                     # adding energy level variable except for last charging event
                     if charging_opportunity != last_charging_event:
-                        index_energy = list(model.variables.add(names=[string_name_energy],
-                                                                lb=[parameters.Min_battery_capacity],
-                                                                ub=[parameters.Max_battery_capacity], types=["C"]))[0]
+
+                        index_energy = list(
+                            model.variables.add(
+                                names=[string_name_energy],
+                                lb=[parameters.Min_battery_capacity],
+                                ub=[parameters.Max_battery_capacity],
+                                types=["C"]
+                            )
+                        )[0]
 
                         if charging_opportunity == 1:
                             index_scenario_bus[scenario][bus] = index_energy
 
                         # adding annotation if benders cut is applied
                         if bender:
-                            model.long_annotations.set_values(benders_annotation, object_type, index_energy, scenario)
+                            model.long_annotations.set_values(
+                                benders_annotation,
+                                object_type,
+                                index_energy,
+                                scenario
+                            )
 
-                    # for 1st charging event, introducing the last charging event energy level variable for periodicity
+                    # for 1st charging event, introducing the last charging event
+                    # energy level variable for periodicity
                     if charging_opportunity == 1:
-                        last_event_string = "u" + "_" + str(scenario) + "_" + str(bus) + "_" + str(last_charging_event)
-                        last_index_energy = list(model.variables.add(names=[last_event_string],
-                                                                     lb=[parameters.Min_battery_capacity],
-                                                                     ub=[parameters.Max_battery_capacity],
-                                                                     types=["C"]))[0]
+
+                        last_event_string = (
+                                "u" + "_" + str(scenario) + "_" + str(bus) + "_" +
+                                str(last_charging_event)
+                        )
+
+                        last_index_energy = list(
+                            model.variables.add(
+                                names=[last_event_string],
+                                lb=[parameters.Min_battery_capacity],
+                                ub=[parameters.Max_battery_capacity],
+                                types=["C"]
+                            )
+                        )[0]
 
                         if last_charging_event == 1:
                             index_scenario_bus[scenario][bus] = last_index_energy
 
                         # adding annotation if benders cut is applied
                         if bender:
-                            model.long_annotations.set_values(benders_annotation, object_type, last_index_energy,
-                                                              scenario)
+                            model.long_annotations.set_values(
+                                benders_annotation,
+                                object_type,
+                                last_index_energy,
+                                scenario
+                            )
 
-                        # adding index and coefficient for the last charging event energy level variable
+                        # adding index and coefficient for the last charging event
+                        # energy level variable
                         if len(time_stamps_for_charging_opportunity) > 1:
                             list_index_energy.append(last_index_energy)
-                            list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+                            list_coefficient_energy.append(
+                                -1 * parameters.scale_factor_constraints
+                            )
                         else:
                             pass
 
                     # else allowing previous charging event energy level variable
                     else:
-                        list_index_energy.append(previous_charging_event_stamp_index)
-                        list_coefficient_energy.append(-1 * parameters.scale_factor_constraints)
+
+                        list_index_energy.append(
+                            previous_charging_event_stamp_index
+                        )
+
+                        list_coefficient_energy.append(
+                            -1 * parameters.scale_factor_constraints
+                        )
 
                     # for max allowed energy transfer, extracting the index and
                     # coefficient from the list index and coefficient
-                    constraint_indices_max = [i for i in list_index_energy]
-                    list_coefficient_max = [-i for i in list_coefficient_energy]
+                    constraint_indices_max = [
+                        i for i in list_index_energy
+                    ]
 
-                    # if there is only one charging event, then the first and last energy level variable will be same
+                    list_coefficient_max = [
+                        -i for i in list_coefficient_energy
+                    ]
+
+                    # if there is only one charging event, then the first and
+                    # last energy level variable will be same
                     if len(time_stamps_for_charging_opportunity) > 1:
-                        list_coefficient_energy.append(1 * parameters.scale_factor_constraints)
+
+                        list_coefficient_energy.append(
+                            1 * parameters.scale_factor_constraints
+                        )
+
                         if charging_opportunity == last_charging_event:
                             list_index_energy.append(last_index_energy)
                         else:
                             list_index_energy.append(index_energy)
+
                     else:
                         pass
 
                     # adding direction and rhs for the energy level constraint
                     constraint_direction = ["E"]
-                    # print(scenario, bus, charging_opportunity)
-                    rhs = [-dict_energy[scenario][bus][charging_opportunity] * parameters.scale_factor_constraints]
+
+                    rhs = [
+                        -dict_energy[scenario][bus][charging_opportunity] *
+                        parameters.scale_factor_constraints
+                    ]
+
                     model.linear_constraints.add(
-                        lin_expr=[cplex.SparsePair(ind=list_index_energy, val=list_coefficient_energy)],
+                        lin_expr=[
+                            cplex.SparsePair(
+                                ind=list_index_energy,
+                                val=list_coefficient_energy
+                            )
+                        ],
                         senses=constraint_direction,
                         rhs=rhs,
-                        names=constraint_name_energy)
+                        names=constraint_name_energy
+                    )
+
+                    # energy record
+                    energy = dict_energy[scenario][bus][charging_opportunity]
+
+                    energy_records.append({
+                        "scenario": scenario,
+                        "bus": bus,
+                        "charging_opportunity": charging_opportunity,
+                        "energy": energy,
+                        "timesteps": ",".join(str(t) for t in time_stamps),
+                        "location": location
+                    })
+
                     ###########################################################################################
-                    # max energy level constraint
+                    # MAX ENERGY LEVEL CONSTRAINT
                     # EQUATION 5 from the paper
-                    constraint_name_max_energy = [f"maximum_energy_{scenario}_{bus}_{charging_opportunity}"]
+                    #
+                    # KEPT UNCHANGED
+                    ###########################################################################################
+
+                    constraint_name_max_energy = [
+                        f"maximum_energy_{scenario}_{bus}_{charging_opportunity}"
+                    ]
+
                     constraint_direction = ["L"]
-                    rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints]
+
+                    rhs = [
+                        parameters.Max_battery_capacity *
+                        parameters.scale_factor_constraints
+                    ]
+
                     model.linear_constraints.add(
-                        lin_expr=[cplex.SparsePair(ind=constraint_indices_max, val=list_coefficient_max)],
+                        lin_expr=[
+                            cplex.SparsePair(
+                                ind=constraint_indices_max,
+                                val=list_coefficient_max
+                            )
+                        ],
                         senses=constraint_direction,
                         rhs=rhs,
-                        names=constraint_name_max_energy)
+                        names=constraint_name_max_energy
+                    )
 
-                # storing the current energy level variable index for the next charging event
-                previous_charging_event_stamp_index = index_energy
+                    # storing the current energy level variable index
+                    # for the next charging event
+                    previous_charging_event_stamp_index = index_energy
 
-            # constraint_name = [f"bus_equality_{scenario}_{bus}"]
-            # constraint_direction = ["E"]
-            # rhs = [0 * parameters.scale_factor_constraints]
-            # list_c = [1 * parameters.scale_factor_constraints, -1 * parameters.scale_factor_constraints]
-            # list_ind = [index_scenario_bus[scenario][bus], bus_battery_start[bus]]
-            # model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
-            #                              senses=constraint_direction,
-            #                              rhs=rhs,
-            #                              names=constraint_name)
+                # -------------------------------------------------------------------------
+                # SKIPPED CHARGING OPPORTUNITY
+                # -------------------------------------------------------------------------
+                # ONLY special-case the LAST charging opportunity.
+                #
+                # If the last charging opportunity has no valid charging interval,
+                # the terminal energy variable should equal the previous energy level:
+                #
+                #       u_last = u_previous
+                #
+                # No new u variable is created.
+                # -------------------------------------------------------------------------
 
-            # refer EQUATION 12 in the paper (>= part)
-            constraint_name = [f"bus_g_equality_{scenario}_{bus}"]
+                else:
+
+                    if charging_opportunity == last_charging_event:
+                        constraint_name_skip = [
+                            f"constraint_energy_skipped_"
+                            f"{scenario}_{bus}_{charging_opportunity}"
+                        ]
+
+                        constraint_indices_skip = [
+                            last_index_energy,
+                            previous_charging_event_stamp_index
+                        ]
+
+                        constraint_coefficients_skip = [
+                            parameters.scale_factor_constraints,
+                            -parameters.scale_factor_constraints
+                        ]
+
+                        model.linear_constraints.add(
+                            lin_expr=[
+                                cplex.SparsePair(
+                                    ind=constraint_indices_skip,
+                                    val=constraint_coefficients_skip
+                                )
+                            ],
+                            senses=["E"],
+                            rhs=[0],
+                            names=constraint_name_skip
+                        )
+
+                    # ---------------------------------------------------------------------
+                    # Energy record
+                    #
+                    # A skipped opportunity may not exist in dict_energy.
+                    # Therefore, use zero energy if it is absent.
+                    # ---------------------------------------------------------------------
+
+                    energy = dict_energy[scenario][bus].get(
+                        charging_opportunity,
+                        0.0
+                    )
+
+                    energy_records.append({
+                        "scenario": scenario,
+                        "bus": bus,
+                        "charging_opportunity": charging_opportunity,
+                        "energy": energy,
+                        "timesteps": ",".join(str(t) for t in time_stamps),
+                        "location": time_stamps[-1]
+                    })
+
+            # -------------------------------------------------------------------------
+            # EQUATION 12 -- >= PART
+            # -------------------------------------------------------------------------
+
+            constraint_name = [
+                f"bus_g_equality_{scenario}_{bus}"
+            ]
+
             constraint_direction = ["G"]
-            rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
-                1] * parameters.scale_factor_constraints]
-            list_c = [1 * parameters.scale_factor_constraints]
-            list_ind = [index_scenario_bus[scenario][bus]]
-            model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
-                                         senses=constraint_direction,
-                                         rhs=rhs,
-                                         names=constraint_name)
-            # refer EQUATION 12 in the paper (<= part)
-            constraint_name = [f"bus_l_equality_{scenario}_{bus}"]
+
+            rhs = [
+                parameters.Max_battery_capacity *
+                parameters.scale_factor_constraints -
+                dict_energy[scenario][bus][1] *
+                parameters.scale_factor_constraints
+            ]
+
+            list_c = [
+                1 * parameters.scale_factor_constraints
+            ]
+
+            list_ind = [
+                index_scenario_bus[scenario][bus]
+            ]
+
+            model.linear_constraints.add(
+                lin_expr=[
+                    cplex.SparsePair(
+                        ind=list_ind,
+                        val=list_c
+                    )
+                ],
+                senses=constraint_direction,
+                rhs=rhs,
+                names=constraint_name
+            )
+
+            # -------------------------------------------------------------------------
+            # EQUATION 12 -- <= PART
+            # -------------------------------------------------------------------------
+
+            constraint_name = [
+                f"bus_l_equality_{scenario}_{bus}"
+            ]
+
             constraint_direction = ["L"]
-            rhs = [parameters.Max_battery_capacity * parameters.scale_factor_constraints - dict_energy[scenario][bus][
-                1] * parameters.scale_factor_constraints]
-            list_c = [1 * parameters.scale_factor_constraints]
-            list_ind = [index_scenario_bus[scenario][bus]]
-            model.linear_constraints.add(lin_expr=[cplex.SparsePair(ind=list_ind, val=list_c)],
-                                         senses=constraint_direction,
-                                         rhs=rhs,
-                                         names=constraint_name)
+
+            rhs = [
+                parameters.Max_battery_capacity *
+                parameters.scale_factor_constraints -
+                dict_energy[scenario][bus][1] *
+                parameters.scale_factor_constraints
+            ]
+
+            list_c = [
+                1 * parameters.scale_factor_constraints
+            ]
+
+            list_ind = [
+                index_scenario_bus[scenario][bus]
+            ]
+
+            model.linear_constraints.add(
+                lin_expr=[
+                    cplex.SparsePair(
+                        ind=list_ind,
+                        val=list_c
+                    )
+                ],
+                senses=constraint_direction,
+                rhs=rhs,
+                names=constraint_name
+            )
+
+    energy_df = pd.DataFrame(energy_records)
+
+    energy_df.to_csv("energy.csv", index=False)
 
     return model, dict_grid_index, dict_solar_index
 
@@ -799,6 +1743,30 @@ def build_and_solve_scenario_based_csp(dict_charging_opportunity_time_stamp,
                                                            renewable=use_renewables)
     end_time1 = time.time()
     time_taken1 = end_time1 - start_time1
+
+    # ============================================================
+    # 2. MASTER-ONLY CONSTRAINTS
+    # ============================================================
+
+    # start_time_master_constraints = time.time()
+    #
+    # model = add_master_only_constraints(
+    #     model=model,
+    #     dict_location_index=dict_location_index,
+    #     maximum_simultaneous_buses_file="maximum_simultaneous_buses.csv",
+    #     energy_file="energy.csv",
+    #     bus_wise_total_energy_file="bus_wise_total_energy.csv",
+    #     charging_locations=charging_locations
+    # )
+    #
+    # end_time_master_constraints = time.time()
+    #
+    # time_taken_master_constraints = (
+    #         end_time_master_constraints
+    #         - start_time_master_constraints
+    # )
+
+    # ============================================================
 
     # add decision variables for each scenario
     start_time2 = time.time()
